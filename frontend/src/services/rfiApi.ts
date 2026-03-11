@@ -48,11 +48,14 @@ export const listRfiExtractions = async (projectId: string) => {
     return res.json();
 };
 
-export const getRfiExcelDownloadUrl = (projectId: string, extractionId?: string): string => {
+export const getRfiExcelDownloadUrl = (projectId: string, extractionId?: string, baseUrl?: string): string => {
     const tok = getToken();
     let url = `${BASE}/rfis/${projectId}/excel/download?token=${tok}`;
     if (extractionId) {
         url += `&extractionId=${extractionId}`;
+    }
+    if (baseUrl && baseUrl.trim()) {
+        url += `&baseUrl=${encodeURIComponent(baseUrl.trim())}`;
     }
     return url;
 };
@@ -73,12 +76,13 @@ export const updateRfiResponse = async (
     projectId: string,
     extractionId: string,
     rfiIndex: number,
-    response: string
+    response: string,
+    remarks: string
 ) => {
     const res = await fetch(`${BASE}/rfis/${projectId}/${extractionId}/response/${rfiIndex}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ response }),
+        body: JSON.stringify({ response, remarks }),
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));

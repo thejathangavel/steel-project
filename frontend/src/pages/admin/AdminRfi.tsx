@@ -5,8 +5,7 @@ import {
     uploadRfiDrawing,
     getRfiExcelDownloadUrl,
     deleteRfiExtraction,
-    updateRfiResponse,
-    updateRfiStatus
+    updateRfiResponse
 } from '../../services/rfiApi';
 import { useAuth } from '../../context/AuthContext';
 
@@ -60,14 +59,15 @@ export default function AdminRfi() {
     const [dragOver, setDragOver] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const isAdmin = user?.role === 'admin';
+    const [folderUrl, setFolderUrl] = useState('');  // base URL for 'Link to Source' in Excel
 
     // response editing: key = `${extractionId}_${rfiIndex}`, value = draft text
     const [responseEdits, setResponseEdits] = useState<Record<string, string>>({});
+    const [remarksEdits, setRemarksEdits] = useState<Record<string, string>>({});
     // tracks which rfi is currently being saved
     const [savingResponse, setSavingResponse] = useState<Record<string, boolean>>({});
     const [savedResponse, setSavedResponse] = useState<Record<string, boolean>>({});
-    // tracks status saves: key = `${extractionId}_${rfiIndex}`
-    const [savingStatus, setSavingStatus] = useState<Record<string, boolean>>({});
+    // tracks which rfi is currently being saved
 
     useEffect(() => {
         (async () => {
@@ -123,21 +123,22 @@ export default function AdminRfi() {
         } catch { alert('Failed to delete.'); }
     };
 
-    const handleSaveResponse = async (extractionId: string, rfiIndex: number, responseText: string) => {
+    const handleSaveResponse = async (extractionId: string, rfiIndex: number, responseText: string, remarksText: string) => {
         const key = `${extractionId}_${rfiIndex}`;
         setSavingResponse(prev => ({ ...prev, [key]: true }));
         try {
-            await updateRfiResponse(
+            const resData = await updateRfiResponse(
                 selectedProject._id || selectedProject.id,
                 extractionId,
                 rfiIndex,
-                responseText
+                responseText,
+                remarksText
             );
             // Update local extractions state so the saved value is reflected
             setExtractions(prev => prev.map(ext => {
                 if (ext._id !== extractionId) return ext;
                 const updatedRfis = ext.rfis.map((rfi: any, i: number) =>
-                    i === rfiIndex ? { ...rfi, response: responseText } : rfi
+                    i === rfiIndex ? resData.rfi : rfi
                 );
                 return { ...ext, rfis: updatedRfis };
             }));
@@ -150,29 +151,7 @@ export default function AdminRfi() {
         }
     };
 
-    const handleStatusChange = async (extractionId: string, rfiIndex: number, newStatus: 'OPEN' | 'CLOSED') => {
-        const key = `${extractionId}_${rfiIndex}`;
-        setSavingStatus(prev => ({ ...prev, [key]: true }));
-        try {
-            await updateRfiStatus(
-                selectedProject._id || selectedProject.id,
-                extractionId,
-                rfiIndex,
-                newStatus
-            );
-            setExtractions(prev => prev.map(ext => {
-                if (ext._id !== extractionId) return ext;
-                const updatedRfis = ext.rfis.map((rfi: any, i: number) =>
-                    i === rfiIndex ? { ...rfi, status: newStatus, closedOn: newStatus === 'CLOSED' ? new Date().toISOString() : undefined } : rfi
-                );
-                return { ...ext, rfis: updatedRfis };
-            }));
-        } catch (err: any) {
-            alert(`Failed to update status: ${err.message}`);
-        } finally {
-            setSavingStatus(prev => ({ ...prev, [key]: false }));
-        }
-    };
+    // handleStatusChange removed since status is now auto-computed
 
     const completedCount = extractions.filter(e => e.status === 'completed').length;
     const projectId = selectedProject?._id || selectedProject?.id;
@@ -210,19 +189,44 @@ export default function AdminRfi() {
                     </p>
                 </div>
                 {completedCount > 0 && projectId && (
-                    <a
-                        href={getRfiExcelDownloadUrl(projectId)}
-                        download
-                        style={{
-                            display: 'inline-flex', alignItems: 'center', gap: 8,
-                            padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600,
-                            background: 'linear-gradient(135deg,#059669,#047857)', color: 'white',
-                            textDecoration: 'none', boxShadow: '0 2px 8px rgba(5,150,105,0.3)',
-                            transition: 'opacity 0.15s',
-                        }}
-                    >
-                        <IconDownload /> Download RFI Excel
-                    </a>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+                        {/* Folder URL input */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
+                                Folder URL (optional)
+                            </label>
+                            <input
+                                type="text"
+                                value={folderUrl}
+                                onChange={e => setFolderUrl(e.target.value)}
+                                placeholder="https://drive.google.com/drive/folders/..."
+                                style={{
+                                    fontSize: 12,
+                                    padding: '6px 10px',
+                                    borderRadius: 7,
+                                    border: '1px solid var(--color-border)',
+                                    background: 'var(--color-background)',
+                                    color: 'var(--color-text-primary)',
+                                    width: 310,
+                                    outline: 'none',
+                                    fontFamily: 'inherit',
+                                }}
+                            />
+                        </div>
+                        <a
+                            href={getRfiExcelDownloadUrl(projectId, undefined, folderUrl)}
+                            download
+                            style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 8,
+                                padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+                                background: 'linear-gradient(135deg,#059669,#047857)', color: 'white',
+                                textDecoration: 'none', boxShadow: '0 2px 8px rgba(5,150,105,0.3)',
+                                transition: 'opacity 0.15s',
+                            }}
+                        >
+                            <IconDownload /> Download RFI Excel
+                        </a>
+                    </div>
                 )}
             </div>
 
@@ -452,7 +456,7 @@ export default function AdminRfi() {
                                                             <span>Extracted RFI Items</span>
                                                             {ext.status === 'completed' && projectId && (
                                                                 <a
-                                                                    href={getRfiExcelDownloadUrl(projectId, ext._id)}
+                                                                    href={getRfiExcelDownloadUrl(projectId, ext._id, folderUrl)}
                                                                     download
                                                                     style={{
                                                                         display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -469,12 +473,13 @@ export default function AdminRfi() {
                                                             {ext.rfis.map((rfi: any, i: number) => {
                                                                 const key = `${ext._id}_${i}`;
                                                                 const draftText = responseEdits[key] ?? rfi.response ?? '';
+                                                                const draftRemarks = remarksEdits[key] ?? rfi.remarks ?? '';
                                                                 const isSaving = savingResponse[key] || false;
                                                                 const justSaved = savedResponse[key] || false;
                                                                 return (
                                                                     <div key={i} style={{
                                                                         background: 'var(--color-surface)', border: '1px solid var(--color-border-light)', borderRadius: 8, padding: '12px 14px',
-                                                                        display: 'grid', gridTemplateColumns: '70px 1fr 1fr 80px', gap: 12, alignItems: 'start',
+                                                                        display: 'grid', gridTemplateColumns: '70px 1fr 1fr 1fr 80px', gap: 12, alignItems: 'start',
                                                                     }}>
                                                                         <div style={{
                                                                             fontSize: 13, fontWeight: 700, color: 'white',
@@ -510,7 +515,7 @@ export default function AdminRfi() {
                                                                                 }}
                                                                             />
                                                                             <button
-                                                                                onClick={() => handleSaveResponse(ext._id, i, draftText)}
+                                                                                onClick={() => handleSaveResponse(ext._id, i, draftText, draftRemarks)}
                                                                                 disabled={isSaving}
                                                                                 style={{
                                                                                     marginTop: 6,
@@ -530,15 +535,37 @@ export default function AdminRfi() {
                                                                                     gap: 4,
                                                                                 }}
                                                                             >
-                                                                                {isSaving ? 'Saving…' : justSaved ? '✓ Saved' : 'Save Response'}
+                                                                                {isSaving ? 'Saving…' : justSaved ? '✓ Saved' : 'Save Response / Remarks'}
                                                                             </button>
+                                                                        </div>
+                                                                        <div>
+                                                                            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Remarks</div>
+                                                                            <textarea
+                                                                                value={draftRemarks}
+                                                                                onChange={(e) => setRemarksEdits(prev => ({ ...prev, [key]: e.target.value }))}
+                                                                                placeholder="Type remarks…"
+                                                                                rows={3}
+                                                                                style={{
+                                                                                    width: '100%',
+                                                                                    fontSize: 12,
+                                                                                    padding: '6px 8px',
+                                                                                    borderRadius: 6,
+                                                                                    border: '1px solid var(--color-border)',
+                                                                                    background: 'var(--color-background)',
+                                                                                    color: 'var(--color-text-primary)',
+                                                                                    resize: 'vertical',
+                                                                                    fontFamily: 'inherit',
+                                                                                    lineHeight: 1.5,
+                                                                                    boxSizing: 'border-box',
+                                                                                    outline: 'none',
+                                                                                }}
+                                                                            />
                                                                         </div>
                                                                         <div>
                                                                             <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Status</div>
                                                                             <select
                                                                                 value={rfi.status || 'OPEN'}
-                                                                                disabled={savingStatus[key]}
-                                                                                onChange={(e) => handleStatusChange(ext._id, i, e.target.value as 'OPEN' | 'CLOSED')}
+                                                                                disabled={true}
                                                                                 style={{
                                                                                     appearance: 'none',
                                                                                     WebkitAppearance: 'none',
@@ -547,13 +574,13 @@ export default function AdminRfi() {
                                                                                     border: 'none',
                                                                                     fontSize: 11,
                                                                                     fontWeight: 700,
-                                                                                    cursor: savingStatus[key] ? 'not-allowed' : 'pointer',
+                                                                                    cursor: 'not-allowed',
                                                                                     outline: 'none',
                                                                                     backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")`,
                                                                                     backgroundRepeat: 'no-repeat',
                                                                                     backgroundPosition: 'right 8px center',
                                                                                     transition: 'background 0.2s, opacity 0.2s',
-                                                                                    opacity: savingStatus[key] ? 0.6 : 1,
+                                                                                    opacity: 0.8,
                                                                                     ...(rfi.status === 'CLOSED'
                                                                                         ? { background: '#16a34a', color: '#fff' }  // green
                                                                                         : { background: '#dc2626', color: '#fff' }  // red

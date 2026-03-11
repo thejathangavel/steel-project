@@ -21,6 +21,52 @@ function extractSkFromFilename(filename) {
 }
 
 /**
+ * formatDescription
+ * Reformats a raw description string for clear Excel display:
+ * - Splits on sentence boundaries (. / ? / ! followed by space or newline)
+ * - Marks each sentence with a bullet point (•)
+ * - Separates observation sentences from question sentences with a double newline
+ * - Trims extra whitespace
+ */
+function formatDescription(raw) {
+    if (!raw || !raw.trim()) return '';
+
+    // Normalize: collapse multiple whitespace (but keep intentional newlines as sentence breaks)
+    const normalized = raw.replace(/[ \t]+/g, ' ').trim();
+
+    // Split on sentence-ending punctuation followed by whitespace or newline
+    const parts = normalized
+        .split(/(?<=[.?!])\s+/)
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+
+    if (parts.length <= 1) {
+        // Single sentence — return as-is
+        return parts[0] || normalized;
+    }
+
+    // Separate observations (non-questions) from questions (ending with ?)
+    const observations = [];
+    const questions = [];
+    parts.forEach(s => {
+        if (s.endsWith('?')) {
+            questions.push(s);
+        } else {
+            observations.push(s);
+        }
+    });
+
+    const obsBlock = observations.join('\n');
+    const qBlock = questions.join('\n');
+
+    if (obsBlock && qBlock) {
+        return `${obsBlock}\n\n${qBlock}`;
+    }
+    return (obsBlock || qBlock);
+}
+
+
+/**
  * generateRfiLogExcel
  * Generates an RFI Log Excel in the style shown in the reference image:
  *   - Logo row: Caldim logo image (merged across all columns)
@@ -29,7 +75,7 @@ function extractSkFromFilename(filename) {
  *   - Data rows with alternating white/light-grey backgrounds
  *   - "CONFIRMED" responses highlighted in yellow with red bold text
  */
-exports.generateRfiLogExcel = async (rfiExtractions, projectDetails) => {
+exports.generateRfiLogExcel = async (rfiExtractions, projectDetails, baseUrl) => {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'System';
     workbook.created = new Date();
@@ -44,19 +90,20 @@ exports.generateRfiLogExcel = async (rfiExtractions, projectDetails) => {
     const today = new Date();
     const updatedOn = `${String(today.getMonth() + 1).padStart(2, '0')}/${String(today.getDate()).padStart(2, '0')}/${today.getFullYear()}`;
 
-    // ── Column widths (9 columns) ─────────────────────────────
-    // S.NO | Sent On | SK # | Ref. Drawing | Description | Response | Status | Closed on | Remarks
-    sheet.getColumn(1).width = 8;   // S.NO
-    sheet.getColumn(2).width = 14;  // Sent On
-    sheet.getColumn(3).width = 12;  // SK #
-    sheet.getColumn(4).width = 22;  // Ref. Drawing
-    sheet.getColumn(5).width = 60;  // Description
-    sheet.getColumn(6).width = 38;  // Response
-    sheet.getColumn(7).width = 12;  // Status
-    sheet.getColumn(8).width = 14;  // Closed on
-    sheet.getColumn(9).width = 30;  // Remarks
+    // ── Column widths (10 columns) ─────────────────────────────
+    // S.NO | Sent On | SK # | Ref. Drawing | Description | Response | Status | Closed on | Remarks | Link to Source
+    sheet.getColumn(1).width = 8;    // S.NO
+    sheet.getColumn(2).width = 14;   // Sent On
+    sheet.getColumn(3).width = 12;   // SK #
+    sheet.getColumn(4).width = 22;   // Ref. Drawing
+    sheet.getColumn(5).width = 60;   // Description
+    sheet.getColumn(6).width = 38;   // Response
+    sheet.getColumn(7).width = 12;   // Status
+    sheet.getColumn(8).width = 14;   // Closed on
+    sheet.getColumn(9).width = 30;   // Remarks
+    sheet.getColumn(10).width = 20;  // Link to Source
 
-    const TOTAL_COLS = 9;
+    const TOTAL_COLS = 10;
 
     const commonBorder = {
         top: { style: 'thin', color: { argb: 'FF000000' } },
@@ -130,17 +177,18 @@ exports.generateRfiLogExcel = async (rfiExtractions, projectDetails) => {
 
     infoRow.getCell(1).value = `CUSTOMER: ${clientName.toUpperCase()}`;
     infoRow.getCell(1).style = infoCellStyle;
+    sheet.mergeCells(3, 1, 3, 2);
 
-    infoRow.getCell(2).value = `PROJECT NAME: ${projectName.toUpperCase()}`;
-    infoRow.getCell(2).style = infoCellStyle;
-    sheet.mergeCells(3, 2, 3, 3);
+    infoRow.getCell(3).value = `PROJECT NAME: ${projectName.toUpperCase()}`;
+    infoRow.getCell(3).style = infoCellStyle;
+    sheet.mergeCells(3, 3, 3, 4);
 
-    infoRow.getCell(4).value = `PROJECT NO: ${projectNo || '-'}`;
-    infoRow.getCell(4).style = infoCellStyle;
-
-    infoRow.getCell(5).value = `Updated on: ${updatedOn}`;
+    infoRow.getCell(5).value = `PROJECT NO: ${projectNo || '-'}`;
     infoRow.getCell(5).style = infoCellStyle;
-    sheet.mergeCells(3, 5, 3, 9);  // span remaining columns
+
+    infoRow.getCell(6).value = `Updated on: ${updatedOn}`;
+    infoRow.getCell(6).style = infoCellStyle;
+    sheet.mergeCells(3, 6, 3, 10);
 
     // ensure all merged cells in row 3 have border
     for (let c = 1; c <= TOTAL_COLS; c++) {
@@ -153,7 +201,7 @@ exports.generateRfiLogExcel = async (rfiExtractions, projectDetails) => {
     // ROW 4 — Column headers
     // S.NO | Sent On | SK # | Ref. Drawing | Description | Response | Status | Closed on | Remarks
     // ════════════════════════════════════════════════════════
-    const COL_HEADERS = ['S.NO', 'Sent On', 'SK #', 'Ref. Drawing', 'Description', 'Response', 'Status', 'Closed on', 'Remarks'];
+    const COL_HEADERS = ['S.NO', 'Sent On', 'SK #', 'Ref. Drawing', 'Description', 'Response', 'Status', 'Closed on', 'Remarks', 'Link to Source'];
 
     const colHeaderStyle = {
         font: { bold: true, size: 10, color: { argb: 'FF000000' } },
@@ -227,7 +275,7 @@ exports.generateRfiLogExcel = async (rfiExtractions, projectDetails) => {
         const rowFill = isEvenGroup ? GREY_FILL : WHITE_FILL;
 
         const dataRow = sheet.getRow(excelRowNum);
-        dataRow.height = 36;
+        dataRow.height = 80; // taller rows to accommodate formatted multi-line descriptions
 
         // S.NO
         const sNoCell = dataRow.getCell(1);
@@ -251,8 +299,8 @@ exports.generateRfiLogExcel = async (rfiExtractions, projectDetails) => {
 
         // Description
         const descCell = dataRow.getCell(5);
-        descCell.value = description;
-        descCell.style = { font: { size: 10 }, fill: rowFill, alignment: { vertical: 'middle', horizontal: 'left', wrapText: true }, border: commonBorder };
+        descCell.value = formatDescription(description);
+        descCell.style = { font: { size: 10 }, fill: rowFill, alignment: { vertical: 'top', horizontal: 'left', wrapText: true }, border: commonBorder };
 
         // Response — special styling if "CONFIRMED"
         const respCell = dataRow.getCell(6);
@@ -271,15 +319,23 @@ exports.generateRfiLogExcel = async (rfiExtractions, projectDetails) => {
             respCell.style = { font: { size: 10 }, fill: rowFill, alignment: { vertical: 'middle', horizontal: 'left', wrapText: true }, border: commonBorder };
         }
 
-        // Status — teal fill when CLOSE / CLOSED
-        const statusVal = (item.status || '').toUpperCase();
+        // Status — Green for CLOSED, Red for OPEN
+        const statusVal = (item.status || 'OPEN').toUpperCase();
         const statusCell = dataRow.getCell(7);
         const isClosed = statusVal === 'CLOSE' || statusVal === 'CLOSED';
-        const TEAL_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF008080' } };
-        statusCell.value = isClosed ? 'CLOSE' : (item.status || '');
+        const isOpen = statusVal === 'OPEN';
+        
+        const GREEN_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF16A34A' } };
+        const RED_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDC2626' } };
+        
+        let statusFill = rowFill;
+        if (isClosed) statusFill = GREEN_FILL;
+        else if (isOpen) statusFill = RED_FILL;
+        
+        statusCell.value = isClosed ? 'CLOSED' : (isOpen ? 'OPEN' : statusVal);
         statusCell.style = {
-            font: { bold: true, size: 10, color: { argb: isClosed ? 'FFFFFFFF' : 'FF000000' } },
-            fill: isClosed ? TEAL_FILL : rowFill,
+            font: { bold: true, size: 10, color: { argb: (isClosed || isOpen) ? 'FFFFFFFF' : 'FF000000' } },
+            fill: statusFill,
             alignment: { vertical: 'middle', horizontal: 'center' },
             border: commonBorder,
         };
@@ -299,6 +355,29 @@ exports.generateRfiLogExcel = async (rfiExtractions, projectDetails) => {
         const remarksCell = dataRow.getCell(9);
         remarksCell.value = item.remarks || '';
         remarksCell.style = { font: { size: 10 }, fill: rowFill, alignment: { vertical: 'middle', horizontal: 'left', wrapText: true }, border: commonBorder };
+
+        // Link to Source — hyperlink to the original PDF
+        const linkCell = dataRow.getCell(10);
+        const fileName = item.refDrawing || '';
+        const resolvedBase = (baseUrl || '').toString().replace(/\/$/, '');
+        const href = resolvedBase ? `${resolvedBase}/${encodeURIComponent(fileName)}` : '';
+        if (href) {
+            linkCell.value = { text: 'View PDF', hyperlink: href };
+            linkCell.style = {
+                font: { size: 10, color: { argb: 'FF2563EB' }, underline: true },
+                fill: rowFill,
+                alignment: { vertical: 'middle', horizontal: 'center' },
+                border: commonBorder,
+            };
+        } else {
+            linkCell.value = 'View PDF';
+            linkCell.style = {
+                font: { size: 10, color: { argb: 'FF9CA3AF' }, italic: true },
+                fill: rowFill,
+                alignment: { vertical: 'middle', horizontal: 'center' },
+                border: commonBorder,
+            };
+        }
 
         const isSameGroup = (sentOnStr === prevSentOn && skNum === prevSkNum);
         if (!isSameGroup) {

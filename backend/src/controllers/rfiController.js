@@ -85,7 +85,8 @@ exports.downloadRfiExcel = async (req, res) => {
             return res.status(404).json({ error: 'No completed RFI extractions found.' });
         }
 
-        const { buffer, filename } = await generateRfiLogExcel(extractions);
+        const baseUrl = req.query.baseUrl || '';
+        const { buffer, filename } = await generateRfiLogExcel(extractions, {}, baseUrl);
 
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -96,15 +97,11 @@ exports.downloadRfiExcel = async (req, res) => {
     }
 };
 
-// Update response for a single RFI item within an extraction
+// Update response/remarks for a single RFI item within an extraction
 exports.updateRfiResponse = async (req, res) => {
     const { projectId, id, rfiIndex } = req.params;
     const adminId = req.principal.adminId;
-    const { response } = req.body;
-
-    if (response === undefined || response === null) {
-        return res.status(400).json({ error: 'response field is required.' });
-    }
+    const { response, remarks } = req.body;
 
     const idx = parseInt(rfiIndex, 10);
     if (isNaN(idx) || idx < 0) {
@@ -119,10 +116,36 @@ exports.updateRfiResponse = async (req, res) => {
             return res.status(404).json({ error: `RFI item at index ${idx} not found.` });
         }
 
-        extraction.rfis[idx].response = response;
+        const reqResponse = response !== undefined ? response : extraction.rfis[idx].response;
+        const reqRemarks = remarks !== undefined ? remarks : extraction.rfis[idx].remarks;
+
+        const hasResponse = reqResponse && reqResponse.trim() !== '';
+        const hasRemarks = reqRemarks && reqRemarks.trim() !== '';
+
+        let newStatus = 'OPEN';
+        if (hasResponse && !hasRemarks) {
+            newStatus = 'CLOSED';
+        } else if (hasRemarks && !hasResponse) {
+            newStatus = 'OPEN';
+        } else if (hasResponse && hasRemarks) {
+            newStatus = 'CLOSED';
+        }
+
+        const oldStatus = extraction.rfis[idx].status;
+
+        extraction.rfis[idx].response = reqResponse || '';
+        extraction.rfis[idx].remarks = reqRemarks || '';
+        extraction.rfis[idx].status = newStatus;
+
+        if (newStatus === 'CLOSED' && oldStatus !== 'CLOSED') {
+            extraction.rfis[idx].closedOn = new Date();
+        } else if (newStatus === 'OPEN') {
+            extraction.rfis[idx].closedOn = undefined;
+        }
+
         await extraction.save();
 
-        res.json({ message: 'Response saved.', rfi: extraction.rfis[idx] });
+        res.json({ message: 'Response/Remarks saved.', rfi: extraction.rfis[idx] });
     } catch (err) {
         console.error('[RfiController] updateRfiResponse error:', err);
         res.status(500).json({ error: 'Failed to save response.' });
