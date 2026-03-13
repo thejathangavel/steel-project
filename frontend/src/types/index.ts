@@ -57,6 +57,15 @@ export interface Project {
     updatedAt: string;
     assignments: ProjectAssignment[];
     drawingCount: number;
+    approximateDrawingsCount: number;
+    approvalPercentage?: number;
+    fabricationPercentage?: number;
+    openRfiCount?: number;
+    closedRfiCount?: number;
+    totalCO?: number;
+    approvedCO?: number;
+    workCompletedCO?: number;
+    pendingCO?: number;
     /** Multi-tenant key: the admin who created this project */
     createdByAdminId: string;
     /** User-specific permission (injected for user dashboard) */

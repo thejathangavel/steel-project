@@ -15,8 +15,9 @@ const STATUS_CLS: Record<ProjectStatus, string> = {
 
 interface CreateProjectForm {
     name: string; clientName: string; description: string; status: ProjectStatus;
+    approximateDrawingsCount: string;
 }
-const DEFAULT_FORM: CreateProjectForm = { name: '', clientName: '', description: '', status: 'active' };
+const DEFAULT_FORM: CreateProjectForm = { name: '', clientName: '', description: '', status: 'active', approximateDrawingsCount: '0' };
 
 export default function AdminProjects() {
     const navigate = useNavigate();
@@ -67,6 +68,7 @@ export default function AdminProjects() {
                 clientName: form.clientName.trim(),
                 description: form.description.trim(),
                 status: form.status,
+                approximateDrawingsCount: Number(form.approximateDrawingsCount) || 0,
             });
 
             const newProject = {
@@ -107,7 +109,8 @@ export default function AdminProjects() {
                 name: editTarget.name,
                 clientName: editTarget.clientName,
                 description: editTarget.description,
-                status: editTarget.status
+                status: editTarget.status,
+                approximateDrawingsCount: editTarget.approximateDrawingsCount
             });
 
             // Re-map with consistent ID
@@ -202,8 +205,9 @@ export default function AdminProjects() {
                                 <th>Project Name</th>
                                 <th>Client Name</th>
                                 <th>Created</th>
-                                <th>Users</th>
-                                <th>Drawings</th>
+                                <th>Approx. DWGs</th>
+                                <th>Approval %</th>
+                                <th>Fabrication %</th>
                                 <th>Status</th>
                                 <th>Actions</th>
                             </tr>
@@ -224,20 +228,23 @@ export default function AdminProjects() {
                                         <td className="text-muted font-mono" style={{ fontSize: 12.5 }}>
                                             {new Date(p.createdAt).toLocaleDateString()}
                                         </td>
+                                        <td className="font-mono" style={{ fontWeight: 600 }}>{p.approximateDrawingsCount || 0}</td>
                                         <td>
-                                            {(() => {
-                                                const assignedUsers = p.assignments?.filter(a => a.permission !== 'admin') || [];
-                                                if (assignedUsers.length === 0) {
-                                                    return <span className="text-muted">—</span>;
-                                                }
-                                                return (
-                                                    <span style={{ fontWeight: 500 }}>
-                                                        {assignedUsers.length} user{assignedUsers.length > 1 ? 's' : ''}
-                                                    </span>
-                                                );
-                                            })()}
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                <div style={{flex: 1, height: 6, background: 'var(--color-bg-page)', borderRadius: 3, overflow: 'hidden'}}>
+                                                    <div style={{width: `${p.approvalPercentage || 0}%`, height: '100%', background: 'var(--color-primary)'}} />
+                                                </div>
+                                                <span className="font-mono" style={{fontSize: 12, fontWeight: 700}}>{p.approvalPercentage || 0}%</span>
+                                            </div>
                                         </td>
-                                        <td className="font-mono" style={{ fontWeight: 600 }}>{p.drawingCount}</td>
+                                        <td>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                <div style={{flex: 1, height: 6, background: 'var(--color-bg-page)', borderRadius: 3, overflow: 'hidden'}}>
+                                                    <div style={{width: `${p.fabricationPercentage || 0}%`, height: '100%', background: 'var(--color-success-mid)'}} />
+                                                </div>
+                                                <span className="font-mono" style={{fontSize: 12, fontWeight: 700}}>{p.fabricationPercentage || 0}%</span>
+                                            </div>
+                                        </td>
                                         <td>
                                             <span className={`badge ${STATUS_CLS[p.status]}`}>
                                                 {STATUS_LABEL[p.status]}
@@ -295,10 +302,15 @@ export default function AdminProjects() {
                                 <input className="form-control" placeholder="e.g. Infra Corp Ltd."
                                     value={form.clientName} onChange={(e) => setForm({ ...form, clientName: e.target.value })} />
                             </div>
-                            <div className="form-group">
+                             <div className="form-group">
                                 <label className="form-label">Description</label>
                                 <textarea className="form-control" placeholder="Brief project description…" rows={3}
                                     value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label required">Approximate Drawings Count</label>
+                                <input className="form-control" type="number" placeholder="e.g. 50"
+                                    value={form.approximateDrawingsCount} onChange={(e) => setForm({ ...form, approximateDrawingsCount: e.target.value })} />
                             </div>
                             <div className="form-group">
                                 <label className="form-label">Initial Status</label>
@@ -340,10 +352,15 @@ export default function AdminProjects() {
                                 <input className="form-control" value={editTarget.clientName}
                                     onChange={(e) => setEditTarget({ ...editTarget, clientName: e.target.value })} />
                             </div>
-                            <div className="form-group">
+                             <div className="form-group">
                                 <label className="form-label">Description</label>
                                 <textarea className="form-control" rows={3} value={editTarget.description}
                                     onChange={(e) => setEditTarget({ ...editTarget, description: e.target.value })} />
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label required">Approximate Drawings Count</label>
+                                <input className="form-control" type="number" value={editTarget.approximateDrawingsCount}
+                                    onChange={(e) => setEditTarget({ ...editTarget, approximateDrawingsCount: Number(e.target.value) })} />
                             </div>
                             <div className="form-group">
                                 <label className="form-label">Status</label>

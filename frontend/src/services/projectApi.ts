@@ -42,6 +42,7 @@ export async function adminCreateProject(data: {
     clientName: string;
     description?: string;
     status?: ProjectStatus;
+    approximateDrawingsCount?: number;
 }): Promise<{ project: Project }> {
     const res = await fetch(`${BASE}/admin/projects`, {
         method: 'POST',
@@ -128,7 +129,11 @@ export async function adminUpdateProject(projectId: string, data: Partial<Create
 }
 
 interface CreateProjectForm {
-    name: string; clientName: string; description: string; status: ProjectStatus;
+    name: string;
+    clientName: string;
+    description: string;
+    status: ProjectStatus;
+    approximateDrawingsCount: number;
 }
 
 /**

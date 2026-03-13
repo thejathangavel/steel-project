@@ -35,7 +35,7 @@ const PYTHON_BIN = process.env.PYTHON_BIN || 'python';  // or 'python3'
  * @param {string} projectId     - MongoDB project _id (string)
  */
 // ── Concurrent Background Worker (10 drawings at once) ───────
-const MAX_CONCURRENCY = 25; // Balanced for high performance and system stability
+const MAX_CONCURRENCY = 10; // Lowered from 25 for better stability on 16-core systems
 let activeCount = 0;
 const extractionQueue = [];
 const excelBatchBuffer = new Map(); // projectId -> Array of rows
@@ -69,13 +69,13 @@ async function resumeExtractions() {
 
 async function cleanupStuckProcesses() {
     try {
-        // Items in 'processing' for more than 5 minutes are likely hung
-        const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000);
+        // Items in 'processing' for more than 15 minutes are likely hung
+        const fifteenMinsAgo = new Date(Date.now() - 15 * 60 * 1000);
         const results = await DrawingExtraction.updateMany(
-            { status: 'processing', updatedAt: { $lt: fiveMinsAgo } },
+            { status: 'processing', updatedAt: { $lt: fifteenMinsAgo } },
             {
                 status: 'failed',
-                errorMessage: 'Processing timed out after 5 minutes of inactivity.'
+                errorMessage: 'Processing timed out after 15 minutes of inactivity.'
             }
         );
         if (results.modifiedCount > 0) {
@@ -125,10 +125,14 @@ async function _executePipeline(extractionId, pdfPath, projectId, targetTransmit
     try {
         let result;
 
+        // Fetch the doc to get originalFileName
+        const doc = await DrawingExtraction.findById(extractionId).lean();
+        const originalFileName = doc ? doc.originalFileName : '';
+
         // ── Step 1+2: Call Python extraction bridge ────────────
         // We always call the bridge. It performs local PDF parsing 
         // using pdfplumber as the default engine.
-        result = await _callPythonBridge(pdfPath);
+        result = await _callPythonBridge(pdfPath, originalFileName);
 
         if (!result.success) {
             throw new Error(result.error || 'Extraction returned failure');
@@ -167,6 +171,7 @@ async function _executePipeline(extractionId, pdfPath, projectId, targetTransmit
                 revision: fields.revision,
                 date: fields.date,
                 remarks: fields.remarks,
+                revisionHistory: fields.revisionHistory || [],
                 scale: fields.scale,
                 projectName: fields.projectName,
                 clientName: fields.clientName,
@@ -210,9 +215,12 @@ async function _executePipeline(extractionId, pdfPath, projectId, targetTransmit
     }
 }
 
-function _callPythonBridge(pdfPath) {
+function _callPythonBridge(pdfPath, originalFileName = '') {
     return new Promise((resolve, reject) => {
         const args = [PYTHON_SCRIPT, pdfPath];
+        if (originalFileName) {
+            args.push('--original_filename', originalFileName);
+        }
 
         const proc = spawn(PYTHON_BIN, args, {
             env: { ...process.env },
@@ -252,11 +260,11 @@ function _callPythonBridge(pdfPath) {
             reject(new Error(`Failed to spawn Python: ${err.message}`));
         });
 
-        // Timeout after 3 minutes
+        // Timeout after 10 minutes (increased from 3m to handle complex drawings)
         timeoutId = setTimeout(() => {
-            proc.kill();
-            reject(new Error('Extraction timed out after 3 minutes'));
-        }, 3 * 60 * 1000);
+            proc.kill('SIGKILL');
+            reject(new Error('Extraction timed out after 10 minutes'));
+        }, 10 * 60 * 1000);
     });
 }
 

@@ -24,6 +24,8 @@ function signToken(payload) {
  */
 async function adminLogin(req, res) {
     const { username, password } = req.body;
+    console.log(`[AUTH] Admin login attempt: ${username}`);
+    
     if (!username || !password) {
         return res.status(400).json({ error: 'Username and password are required.' });
     }
@@ -69,6 +71,8 @@ async function adminLogin(req, res) {
  */
 async function userLogin(req, res) {
     const { username, password } = req.body;
+    console.log(`[AUTH] User login attempt: ${username}`);
+
     if (!username || !password) {
         return res.status(400).json({ error: 'Username and password are required.' });
     }

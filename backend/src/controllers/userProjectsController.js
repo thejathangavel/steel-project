@@ -37,20 +37,67 @@ async function listMyProjects(req, res) {
     const projectIds = projects.map((p) => p._id);
     const counts = await DrawingExtraction.aggregate([
         { $match: { projectId: { $in: projectIds }, status: 'completed' } },
-        { $group: { _id: '$projectId', count: { $sum: 1 } } },
+        {
+            $group: {
+                _id: '$projectId',
+                count: { $sum: 1 },
+                approvalCount: {
+                    $sum: {
+                        $cond: [
+                            {
+                                $or: [
+                                    { $regexMatch: { input: { $ifNull: ["$extractedFields.revision", ""] }, regex: "^(rev\\s*)?[a-z]", options: "i" } },
+                                    { $regexMatch: { input: { $ifNull: ["$extractedFields.remarks", ""] }, regex: "approved|approval", options: "i" } },
+                                    { $regexMatch: { input: { $ifNull: ["$extractedFields.description", ""] }, regex: "approved|approval", options: "i" } }
+                                ]
+                            },
+                            1, 0
+                        ]
+                    }
+                },
+                fabricationCount: {
+                    $sum: {
+                        $cond: [
+                            { $regexMatch: { input: { $ifNull: ["$extractedFields.revision", ""] }, regex: "^(rev\\s*)?[0-9]", options: "i" } },
+                            1, 0
+                        ]
+                    }
+                }
+            }
+        },
     ]);
     const countMap = {};
-    counts.forEach((c) => { countMap[c._id.toString()] = c.count; });
+    counts.forEach((c) => {
+        countMap[c._id.toString()] = {
+            total: c.count,
+            approvalCount: c.approvalCount,
+            fabricationCount: c.fabricationCount
+        };
+    });
 
     // Attach the user's own permission + drawing count in the response
     const result = projects.map((p) => {
         const assignment = p.assignments.find(
             (a) => a.userId.toString() === userId
         );
+        const stats = countMap[p._id.toString()] || { total: 0, approvalCount: 0, fabricationCount: 0 };
+        const approx = p.approximateDrawingsCount || 0;
+        
+        let approvalPercentage = 0;
+        let fabricationPercentage = 0;
+        if (approx > 0) {
+            approvalPercentage = Math.round((stats.approvalCount / approx) * 100);
+            fabricationPercentage = Math.round((stats.fabricationCount / approx) * 100);
+        }
+
         return {
             ...p.toObject(),
             myPermission: assignment?.permission ?? 'viewer',
-            drawingCount: countMap[p._id.toString()] || 0,
+            drawingCount: stats.total,
+            approvalCount: stats.approvalCount,
+            fabricationCount: stats.fabricationCount,
+            approvalPercentage,
+            fabricationPercentage,
         };
     });
 

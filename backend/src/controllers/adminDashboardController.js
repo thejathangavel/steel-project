@@ -26,7 +26,13 @@ async function getAdminStats(req, res) {
                 approvalCount: {
                     $sum: {
                         $cond: [
-                            { $regexMatch: { input: { $ifNull: ["$extractedFields.revision", ""] }, regex: "^(rev\\s*)?[a-z]", options: "i" } },
+                            {
+                                $or: [
+                                    { $regexMatch: { input: { $ifNull: ["$extractedFields.revision", ""] }, regex: "^(rev\\s*)?[a-z]", options: "i" } },
+                                    { $regexMatch: { input: { $ifNull: ["$extractedFields.remarks", ""] }, regex: "approved|approval", options: "i" } },
+                                    { $regexMatch: { input: { $ifNull: ["$extractedFields.description", ""] }, regex: "approved|approval", options: "i" } }
+                                ]
+                            },
                             1, 0
                         ]
                     }
@@ -56,11 +62,22 @@ async function getAdminStats(req, res) {
 
     const recentProjects = projects.slice(0, 5).map(p => {
         const stats = countMap[p._id.toString()] || { total: 0, approvalCount: 0, fabricationCount: 0 };
+        const approx = p.approximateDrawingsCount || 0;
+        
+        let approvalPercentage = 0;
+        let fabricationPercentage = 0;
+        if (approx > 0) {
+            approvalPercentage = Math.round((stats.approvalCount / approx) * 100);
+            fabricationPercentage = Math.round((stats.fabricationCount / approx) * 100);
+        }
+
         return {
             ...p.toObject(),
             drawingCount: stats.total,
             approvalCount: stats.approvalCount,
-            fabricationCount: stats.fabricationCount
+            fabricationCount: stats.fabricationCount,
+            approvalPercentage,
+            fabricationPercentage,
         };
     });
 

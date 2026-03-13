@@ -38,6 +38,16 @@ function normalizeRevision(rev) {
 }
 
 /**
+ * getMark
+ * ───────
+ * Safely extracts the revision mark from either 'mark' or 'revision' property.
+ */
+function getMark(entry) {
+    if (!entry) return '';
+    return entry.mark || entry.revision || '';
+}
+
+/**
  * revisionRank
  * ────────────
  * Returns a numeric rank for a normalised revision mark.
@@ -97,7 +107,7 @@ function compareRevisions(a, b) {
 function pickLatestRevision(history) {
     if (!Array.isArray(history) || history.length === 0) return {};
     return history.reduce((best, entry) => {
-        const cmp = compareRevisions(entry.mark || '', best.mark || '');
+        const cmp = compareRevisions(getMark(entry), getMark(best));
         if (cmp > 0) return entry;
         return best;
     });

@@ -66,7 +66,7 @@ export default function ProjectView() {
                             sheetNo,
                             revMark: h.mark,
                             date: h.date || '-',
-                            description: ex.extractedFields.drawingTitle || ex.originalFileName,
+                            description: ex.extractedFields.drawingTitle || ex.extractedFields.drawingDescription || `[No Title] ${ex.originalFileName}`,
                             revisedBy: uploadedBy
                         });
                     }
