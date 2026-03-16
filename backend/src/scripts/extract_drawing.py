@@ -435,6 +435,11 @@ def extract_locally(pdf_path: str) -> dict:
                 norm_mark = re.sub(r'^REV[\s\-_]*', '', str(mark).strip(), flags=re.I).strip().upper()
                 if not norm_mark or norm_mark in seen_marks:
                     return
+                
+                # Validate standard revision mark (Only A, B, C or 0, 1, 2 as requested)
+                if not re.match(r'^([A-C0-2])$', norm_mark):
+                    return
+                    
                 # Skip obvious noise tokens
                 if norm_mark in ('NO', 'BY', 'OK', 'TO', 'OF', 'IN', 'IS', 'IT',
                                  'DATE', 'MARK', 'ISSUE', 'REVISION', 'COPIES', 'DESTINATION',
@@ -464,8 +469,8 @@ def extract_locally(pdf_path: str) -> dict:
                 r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{1,2}[\s,]+\d{4})\b',
                 re.I
             )
-            # A cell that looks like a valid revision mark (single letter or 1-2 digits)
-            MARK_CELL  = re.compile(r'^[A-Z0-9]{1,2}$', re.I)
+            # A cell that looks like a valid revision mark (only A, B, C or 0, 1, 2)
+            MARK_CELL  = re.compile(r'^[A-C0-2]$', re.I)
 
             def _try_table_extraction(pdf_page):
                 """
@@ -573,7 +578,7 @@ def extract_locally(pdf_path: str) -> dict:
                 # Pattern 1: leading row-number  e.g. "1  A  Issued for Approval  28-01-2026"
                 # Handles both MM-DD-YYYY and DD-MM-YYYY formats
                 rev_rows_new = re.findall(
-                    r'^[ \t]*(\d+)[ \t]+([A-Z0-9]{1,2})[ \t]+(.*?)[ \t]+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})[ \t]*$',
+                    r'^[ \t]*(\d+)[ \t]+([A-C0-2])[ \t]+(.*?)[ \t]+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})[ \t]*$',
                     clean_text, re.I | re.M
                 )
                 for r in rev_rows_new:
@@ -581,7 +586,7 @@ def extract_locally(pdf_path: str) -> dict:
 
                 # Pattern 2: mark  initials  "Mon DD YYYY"  description
                 rev_rows_date_first = re.findall(
-                    r'\b([A-Z0-9]{1,2}|REV[ \t][A-Z0-9]{1,2})\b[ \t]+(?:[A-Z]{2,4}[ \t]+)?\b([A-Z]{3,}[ \t]+\d{1,2}[ \t]*,?[ \t]*\d{4})\b[ \t]+(.*)',
+                    r'\b([A-C0-2]|REV[ \t][A-C0-2])\b[ \t]+(?:[A-Z]{2,4}[ \t]+)?\b([A-Z]{3,}[ \t]+\d{1,2}[ \t]*,?[ \t]*\d{4})\b[ \t]+(.*)',
                     clean_text, re.I
                 )
                 for r in rev_rows_date_first:
@@ -589,7 +594,7 @@ def extract_locally(pdf_path: str) -> dict:
 
                 # Pattern 3: mark  initials  description  "Mon DD YYYY"
                 rev_rows_desc_first = re.findall(
-                    r'\b([A-Z0-9]{1,2}|REV[ \t][A-Z0-9]{1,2})\b[ \t]+(?:[A-Z]{2,4}[ \t]+)?(.*?)[ \t]+\b([A-Z]{3,}[ \t]+\d{1,2}[ \t]*,?[ \t]*\d{4})\b(.*)',
+                    r'\b([A-C0-2]|REV[ \t][A-C0-2])\b[ \t]+(?:[A-Z]{2,4}[ \t]+)?(.*?)[ \t]+\b([A-Z]{3,}[ \t]+\d{1,2}[ \t]*,?[ \t]*\d{4})\b(.*)',
                     clean_text, re.I
                 )
                 for r in rev_rows_desc_first:
@@ -598,7 +603,7 @@ def extract_locally(pdf_path: str) -> dict:
                 # Pattern 4 (fallback): mark  initials  DD-MM-YYYY or YYYY-MM-DD  description
                 if not fields["revisionHistory"]:
                     rev_num = re.findall(
-                        r'\b([A-Z0-9]{1,2})\b[ \t]+(?:[A-Z]{2,4}[ \t]+)?(?:.*?)[ \t]*\b(\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})\b[ \t]+(.*)',
+                        r'\b([A-C0-2])\b[ \t]+(?:[A-Z]{2,4}[ \t]+)?(?:.*?)[ \t]*\b(\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})\b[ \t]+(.*)',
                         clean_text, re.I
                     )
                     for r in rev_num:
@@ -607,11 +612,20 @@ def extract_locally(pdf_path: str) -> dict:
                 # Pattern 5 (broad fallback): "A  Issued for Approval  28/01/2026"
                 if not fields["revisionHistory"]:
                     rev_broad = re.findall(
-                        r'\b([A-Z0-9]{1,2})[ \t]+(Issued[ \t]+for[ \t]+\w+(?:[ \t]+\w+)?)[ \t]+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
+                        r'\b([A-C0-2])[ \t]+(Issued[ \t]+for[ \t]+\w+(?:[ \t]+\w+)?)[ \t]+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
                         clean_text, re.I
                     )
                     for r in rev_broad:
                         _add_rev(r[0], r[2], r[1])
+                        
+                # Pattern 6: DD-MM-YYYY mark description
+                if not fields["revisionHistory"]:
+                    rev_date_first = re.findall(
+                        r'\b(\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})\b[ \t]+\b([A-C0-2]|REV[ \t][A-C0-2])\b[ \t]+(.*)',
+                        clean_text, re.I
+                    )
+                    for r in rev_date_first:
+                        _add_rev(r[1], r[0], r[2])
 
             # Sort chronologically (date ascending) so history is in order
             fields["revisionHistory"].sort(key=get_date_val)
@@ -625,7 +639,7 @@ def extract_locally(pdf_path: str) -> dict:
             else:
                 # Absolute fallback: if text OCR was destroyed by vertical text/grids,
                 # check if the filename ends in _[REV] or -[REV]. e.g. "06D1005_A.pdf" -> "A"
-                rev_match = re.search(r'[_ -]+([A-Za-z0-9]{1,2})\.pdf$', os.path.basename(pdf_path), re.I)
+                rev_match = re.search(r'[_ -]+([A-C0-2])\.pdf$', os.path.basename(pdf_path), re.I)
                 if rev_match:
                     rev_candidate = rev_match.group(1).upper()
                     if rev_candidate not in ('ND', 'TH', 'ST'):

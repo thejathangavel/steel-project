@@ -102,9 +102,42 @@ export default function AdminRfi() {
 
     const doUpload = async (files: File[]) => {
         if (!selectedProject || files.length === 0) return;
-        setUploading(true); setUploadError(''); setUploadSuccess('');
+        const projectId = selectedProject._id || selectedProject.id;
+
+        // Check for duplicate filenames
+        const duplicates = extractions.filter(ext => 
+            files.some(f => f.name === ext.originalFileName)
+        );
+
+        if (duplicates.length > 0) {
+            const msg = duplicates.length === 1 
+                ? `File "${duplicates[0].originalFileName}" already exists in RFI. Should I replace the image?`
+                : `${duplicates.length} files already exist in RFI. Should I replace the images?`;
+            
+            if (!window.confirm(msg)) {
+                return; // User clicked "Cancel"
+            }
+
+            // User clicked "Yes": Delete duplicates first
+            setUploading(true);
+            try {
+                for (const dup of duplicates) {
+                    await deleteRfiExtraction(projectId, dup._id);
+                }
+                // Remove deleted items from UI immediately
+                setExtractions(prev => prev.filter(x => !duplicates.some(d => d._id === x._id)));
+            } catch (err) {
+                setUploading(false);
+                setUploadError('Failed to remove existing file(s) for replacement.');
+                return;
+            }
+        } else {
+            setUploading(true);
+        }
+
+        setUploadError(''); setUploadSuccess('');
         try {
-            await uploadRfiDrawing(selectedProject._id || selectedProject.id, files);
+            await uploadRfiDrawing(projectId, files);
             setPendingFiles([]);
             if (fileInputRef.current) fileInputRef.current.value = '';
             setUploadSuccess(`${files.length} file(s) queued for extraction.`);
