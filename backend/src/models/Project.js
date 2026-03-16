@@ -88,6 +88,12 @@ const projectSchema = new mongoose.Schema(
             min: 0,
         },
 
+        approximateDrawingsCount: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
+
         // ── Transmittal Counter ────────────────────────────────
         // Auto-incremented each time a transmittal is downloaded.
         // Scoped per-project so each project starts from #01.

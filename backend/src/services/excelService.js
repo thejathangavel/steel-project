@@ -245,7 +245,7 @@ async function generateProjectExcel(rows, projectDetails, type) {
     function getLatestRev(f) {
         if (f.revisionHistory && Array.isArray(f.revisionHistory) && f.revisionHistory.length > 0) {
             const latest = pickLatestRevision(f.revisionHistory);
-            return latest.mark || '';
+            return latest.mark || latest.revision || '';
         }
         return f.revision || '';
     }
@@ -322,15 +322,24 @@ async function generateProjectExcel(rows, projectDetails, type) {
             border: commonBorderStyle
         };
 
-        // Row 1 of header: Sl.No | Sheet No. | Drawing Title | Sent for Fabrication (merge D-E) |
+        // Determine Header label based on revisions (Numeric = Fabrication, Alpha = Approval)
+        let hasFabrication = false;
+        rows.forEach(r => {
+            const f = r.extractedFields || {};
+            const rev = (f.revision || '').trim();
+            if (rev && !isNaN(parseInt(rev, 10))) hasFabrication = true;
+        });
+        const headerLabel = hasFabrication ? 'Sent for Fabrication' : 'Sent for Approval';
+
+        // Row 1 of header: Sl.No | Sheet No. | Drawing Title | [Dynamic Header] | Revision History
         trH1.getCell(1).value = 'Sl. No.';
         trH1.getCell(2).value = 'Sheet No.';
         trH1.getCell(3).value = 'Drawing Title';
-        trH1.getCell(4).value = 'Sent for Fabrication';
+        trH1.getCell(4).value = headerLabel;
         trSheet.mergeCells(T_START + 3, 4, T_START + 3, 5); // D-E merge for header
         trH1.getCell(6).value = 'Revision History';
 
-        // Row 2 of header: sub-labels for fabrication cols
+        // Row 2 of header: sub-labels for fabrication/approval cols
         trH2.getCell(4).value = 'REV#';
         trH2.getCell(5).value = 'DATE';
 
@@ -345,7 +354,7 @@ async function generateProjectExcel(rows, projectDetails, type) {
             for (let i = 1; i <= 6; i++) { r.getCell(i).style = headerStyle; }
         });
 
-        // Column widths (5 columns — no Sequence/Area)
+        // Column widths (6 columns)
         trSheet.getColumn(1).width = 12;   // Sl. No.
         trSheet.getColumn(2).width = 22;   // Sheet No.
         trSheet.getColumn(3).width = 50;   // Drawing Title
@@ -681,54 +690,56 @@ async function generateProjectStatusExcel(projectsData) {
     for (let r = 1; r <= 5; r++) sheet.getRow(r).height = 18;
     sheet.getRow(6).height = 6; // Thin spacer
 
-    // ── Title row (below logo) ───────────────────────────────
-    const titleRow = sheet.getRow(7);
-    titleRow.height = 28;
-
-    const titleCell = titleRow.getCell(1); // Column A
-    titleCell.value = 'PROJECT STATUS REPORT';
-    titleCell.style = {
+    // ── Pink Brand Header ──────────────────────────────────────
+    const brandRow = sheet.getRow(7);
+    brandRow.height = 32;
+    const brandCell = brandRow.getCell(1);
+    brandCell.value = 'CALDIM ENGINEERING PVT LTD - PROJECT STATUS (Chennai & Hosur)';
+    brandCell.style = {
         font: { bold: true, size: 14, color: { argb: 'FF000000' } },
-        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } },
+        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF9999' } }, // Pinkish
         alignment: { vertical: 'middle', horizontal: 'center' },
         border: { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } }
     };
-    sheet.mergeCells(7, 1, 7, 11); // Merge A7 to K7 for a seamless yellow banner
+    sheet.mergeCells(7, 1, 7, 14); // Merge across all 14 columns
 
-    // ── Date row ─────────────────────────────────────────────
+    // ── Date row (Generated on) ──────────────────────────────
     const dateRow = sheet.getRow(8);
     dateRow.height = 20;
-    const dateCell = dateRow.getCell(6); // Column F
+    const dateCell = dateRow.getCell(11); // Over PM/Approval area
     dateCell.value = `Generated On: ${formattedDate}`;
     dateCell.style = {
-        font: { italic: true, size: 10, color: { argb: 'FF555555' } },
+        font: { italic: true, size: 9, color: { argb: 'FF555555' } },
         alignment: { vertical: 'middle', horizontal: 'right' }
     };
-    sheet.mergeCells(8, 6, 8, 11); // Merge F8 to K8
+    sheet.mergeCells(8, 11, 8, 14); 
 
-    sheet.getRow(9).height = 10; // spacer before headers
+    sheet.getRow(10).height = 28; // spacer before headers
 
     // ── Column Headers (Row 10) ───────────────────────────────
     const COLS = [
-        { header: 'Sl. No.', key: 'slNo', width: 8 },
-        { header: 'Project Name', key: 'projectName', width: 30 },
-        { header: 'Client Name', key: 'clientName', width: 25 },
-        { header: 'Total Drawings', key: 'totalDrawings', width: 16 },
-        { header: 'Fabrication Count', key: 'fabricationCount', width: 18 },
-        { header: 'Approval Count', key: 'approvalCount', width: 16 },
-        { header: 'Hold Count', key: 'holdCount', width: 12 },
-        { header: 'Pending Count', key: 'pendingCount', width: 14 },
-        { header: 'Failed Count', key: 'failedCount', width: 13 },
-        { header: 'Overall Status', key: 'overallStatus', width: 16 },
-        { header: 'Last Updated', key: 'lastUpdated', width: 18 },
+        { header: 'CDE#', key: 'cdeNo', width: 10 },
+        { header: 'Branch', key: 'branch', width: 15 },
+        { header: 'FABRICATOR', key: 'fabricator', width: 22 },
+        { header: 'DIVISION', key: 'division', width: 15 },
+        { header: 'FAB%', key: 'fab', width: 10 },
+        { header: 'PROJECT NAME', key: 'projectName', width: 45 },
+        { header: 'CLIENT CONTACT', key: 'clientContact', width: 35 },
+        { header: 'CALDIM PM', key: 'pm', width: 20 },
+        { header: 'APPROVAL STATUS', key: 'approvalStatus', width: 20 },
+        { header: 'RFI STATUS', key: 'rfiStatus', width: 25 },
+        { header: 'FAB STATUS', key: 'fabStatus', width: 20 },
+        { header: 'Approved CO', key: 'approvedCo', width: 12 },
+        { header: 'PENDING CO', key: 'pendingCo', width: 12 },
+        { header: 'DECLINED CO', key: 'declinedCo', width: 12 },
     ];
 
     // Only set keys and widths to avoid ExcelJS automatically writing headers to Row 1
     sheet.columns = COLS.map(c => ({ key: c.key, width: c.width }));
 
-    const headerFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
+    const headerFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } }; // Yellow
     const headerStyle = {
-        font: { bold: true, size: 10, color: { argb: 'FF1F3864' } },
+        font: { bold: true, size: 9, color: { argb: 'FF000000' } },
         fill: headerFill,
         alignment: { vertical: 'middle', horizontal: 'center', wrapText: true },
         border: { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } }
@@ -753,34 +764,46 @@ async function generateProjectStatusExcel(projectsData) {
     };
 
     projectsData.forEach((proj, idx) => {
+        const approx = proj.approximateDrawingsCount || 0;
+        let approvalPercentage = 0;
+        let fabricationPercentage = 0;
+        if (approx > 0) {
+            approvalPercentage = Math.round(((proj.approvalCount || 0) / approx) * 100);
+            fabricationPercentage = Math.round(((proj.fabricationCount || 0) / approx) * 100);
+        }
+
         const dataRow = sheet.addRow({
-            slNo: idx + 1,
+            cdeNo: '', // Placeholder
+            branch: '', // Placeholder
+            fabricator: '', // Placeholder
+            division: '', // Placeholder
+            fab: '', // Was fabricationPercentage
             projectName: proj.name || '',
-            clientName: proj.clientName || '',
-            totalDrawings: proj.totalDrawings || 0,
-            fabricationCount: proj.fabricationCount || 0,
-            approvalCount: proj.approvalCount || 0,
-            holdCount: proj.holdCount || 0,
-            pendingCount: proj.pendingCount || 0,
-            failedCount: proj.failedCount || 0,
-            overallStatus: STATUS_LABEL[proj.status] || proj.status || '',
-            lastUpdated: proj.updatedAt ? new Date(proj.updatedAt).toLocaleDateString('en-GB') : '',
+            clientContact: proj.clientName || '',
+            pm: '', // Placeholder
+            approvalStatus: `${approvalPercentage}%`,
+            rfiStatus: `Open: ${proj.openRfiCount || 0}, Closed: ${proj.closedRfiCount || 0}`,
+            fabStatus: STATUS_LABEL[proj.status] || proj.status || '',
+            approvedCo: '',
+            pendingCo: '',
+            declinedCo: '',
         });
-        dataRow.height = 20;
+        dataRow.height = 25; // Increased height to fit wrapped text if any
         dataRow.eachCell((cell, colNum) => {
             cell.border = commonBorder;
-            cell.alignment = { vertical: 'middle', horizontal: colNum <= 3 ? 'left' : 'center', wrapText: true };
+            // Project Name and Client Contact are columns 6 and 7
+            cell.alignment = { vertical: 'middle', horizontal: (colNum === 6 || colNum === 7) ? 'left' : 'center', wrapText: true };
         });
 
-        // Color-code the Overall Status cell (column 10)
-        const statusCell = dataRow.getCell(10);
+        // Color-code the Fab Status cell (column 11)
+        const statusCell = dataRow.getCell(11);
         const statusColor = STATUS_COLOR[proj.status] || 'FF000000';
-        statusCell.font = { bold: true, color: { argb: statusColor }, size: 10 };
+        statusCell.font = { bold: true, color: { argb: statusColor }, size: 9 };
 
         // Alternate row background
         if (idx % 2 === 1) {
             dataRow.eachCell((cell, colNum) => {
-                if (colNum !== 10) {
+                if (colNum !== 11) {
                     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
                 }
             });

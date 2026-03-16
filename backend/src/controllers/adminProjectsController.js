@@ -13,9 +13,12 @@
  *   POST   /api/admin/projects/:projectId/assignments    — assign user
  *   DELETE /api/admin/projects/:projectId/assignments/:userId — remove assignment
  */
+const mongoose = require('mongoose');
 const Project = require('../models/Project');
 const Drawing = require('../models/Drawing');
 const DrawingExtraction = require('../models/DrawingExtraction');
+const RfiExtraction = require('../models/RfiExtraction');
+const ChangeOrder = require('../models/ChangeOrder');
 const { generateProjectStatusExcel } = require('../services/excelService');
 
 /**
@@ -39,18 +42,30 @@ async function listProjects(req, res) {
         .find(filter)
         .sort({ createdAt: -1 });
 
-    // Batch-count completed drawings per project (one DB round-trip)
+    // Batch-count drawings per project (one DB round-trip)
     const projectIds = projects.map((p) => p._id);
     const counts = await DrawingExtraction.aggregate([
-        { $match: { projectId: { $in: projectIds }, status: 'completed' } },
+        { $match: { projectId: { $in: projectIds } } },
         {
             $group: {
                 _id: '$projectId',
-                count: { $sum: 1 },
+                totalCount: { $sum: 1 },
+                completedCount: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
                 approvalCount: {
                     $sum: {
                         $cond: [
-                            { $regexMatch: { input: { $ifNull: ["$extractedFields.revision", ""] }, regex: "^(rev\\s*)?[a-z]", options: "i" } },
+                            {
+                                $and: [
+                                    { $eq: ['$status', 'completed'] },
+                                    {
+                                        $or: [
+                                            { $regexMatch: { input: { $ifNull: ["$extractedFields.revision", ""] }, regex: "^(rev\\s*)?[a-z]", options: "i" } },
+                                            { $regexMatch: { input: { $ifNull: ["$extractedFields.remarks", ""] }, regex: "approved|approval", options: "i" } },
+                                            { $regexMatch: { input: { $ifNull: ["$extractedFields.description", ""] }, regex: "approved|approval", options: "i" } }
+                                        ]
+                                    }
+                                ]
+                            },
                             1, 0
                         ]
                     }
@@ -58,7 +73,12 @@ async function listProjects(req, res) {
                 fabricationCount: {
                     $sum: {
                         $cond: [
-                            { $regexMatch: { input: { $ifNull: ["$extractedFields.revision", ""] }, regex: "^(rev\\s*)?[0-9]", options: "i" } },
+                            {
+                                $and: [
+                                    { $eq: ['$status', 'completed'] },
+                                    { $regexMatch: { input: { $ifNull: ["$extractedFields.revision", ""] }, regex: "^(rev\\s*)?[0-9]", options: "i" } }
+                                ]
+                            },
                             1, 0
                         ]
                     }
@@ -66,22 +86,81 @@ async function listProjects(req, res) {
             }
         },
     ]);
+
     const countMap = {};
     counts.forEach((c) => {
         countMap[c._id.toString()] = {
-            total: c.count,
-            approvalCount: c.approvalCount,
-            fabricationCount: c.fabricationCount
+            total: c.totalCount || 0,
+            completed: c.completedCount || 0,
+            approvalCount: c.approvalCount || 0,
+            fabricationCount: c.fabricationCount || 0
         };
     });
 
+    // ── Aggregate RFI Counts ──────────────────────────────────
+    const rfiCounts = await RfiExtraction.aggregate([
+        { $match: { projectId: { $in: projectIds } } },
+        { $unwind: '$rfis' },
+        {
+            $group: {
+                _id: '$projectId',
+                openRfiCount: { $sum: { $cond: [{ $eq: ['$rfis.status', 'OPEN'] }, 1, 0] } },
+                closedRfiCount: { $sum: { $cond: [{ $eq: ['$rfis.status', 'CLOSED'] }, 1, 0] } }
+            }
+        }
+    ]);
+
+    const rfiMap = {};
+    rfiCounts.forEach(r => {
+        rfiMap[r._id.toString()] = r;
+    });
+
+    // ── Aggregate Change Order Counts ──────────────────────────
+    const coCounts = await ChangeOrder.aggregate([
+        { $match: { projectId: { $in: projectIds } } },
+        {
+            $group: {
+                _id: '$projectId',
+                totalCO: { $sum: 1 },
+                approvedCO: { $sum: { $cond: [{ $eq: ['$status', 'APPROVED'] }, 1, 0] } },
+                workCompletedCO: { $sum: { $cond: [{ $eq: ['$status', 'WORK_COMPLETED'] }, 1, 0] } },
+                pendingCO: { $sum: { $cond: [{ $eq: ['$status', 'PENDING'] }, 1, 0] } }
+            }
+        }
+    ]);
+
+    const coMap = {};
+    coCounts.forEach(c => {
+        coMap[c._id.toString()] = c;
+    });
+
     const projectsWithCount = projects.map((p) => {
-        const stats = countMap[p._id.toString()] || { total: 0, approvalCount: 0, fabricationCount: 0 };
+        const stats = countMap[p._id.toString()] || { total: 0, completed: 0, approvalCount: 0, fabricationCount: 0 };
+        const rfiStats = rfiMap[p._id.toString()] || { openRfiCount: 0, closedRfiCount: 0 };
+        const coStats = coMap[p._id.toString()] || { totalCO: 0, approvedCO: 0, workCompletedCO: 0, pendingCO: 0 };
+        const approx = p.approximateDrawingsCount || 0;
+        
+        let approvalPercentage = 0;
+        let fabricationPercentage = 0;
+        
+        if (approx > 0) {
+            approvalPercentage = Math.round((stats.approvalCount / approx) * 100);
+            fabricationPercentage = Math.round((stats.fabricationCount / approx) * 100);
+        }
+
         return {
             ...p.toObject(),
             drawingCount: stats.total,
             approvalCount: stats.approvalCount,
-            fabricationCount: stats.fabricationCount
+            fabricationCount: stats.fabricationCount,
+            openRfiCount: rfiStats.openRfiCount,
+            closedRfiCount: rfiStats.closedRfiCount,
+            totalCO: coStats.totalCO,
+            approvedCO: coStats.approvedCO,
+            workCompletedCO: coStats.workCompletedCO,
+            pendingCO: coStats.pendingCO,
+            approvalPercentage,
+            fabricationPercentage,
         };
     });
 
@@ -95,7 +174,7 @@ async function listProjects(req, res) {
  */
 async function createProject(req, res) {
     const adminId = req.principal.adminId;
-    const { name, clientName, description, status } = req.body;
+    const { name, clientName, description, status, approximateDrawingsCount } = req.body;
 
     if (!name || !clientName) {
         return res.status(400).json({ error: 'name and clientName are required.' });
@@ -106,6 +185,7 @@ async function createProject(req, res) {
         clientName,
         description: description || '',
         status: status || 'active',
+        approximateDrawingsCount: Number(approximateDrawingsCount) || 0,
         createdByAdminId: adminId,
         assignments: [
             {
@@ -135,11 +215,12 @@ async function getProject(req, res) {
  */
 async function updateProject(req, res) {
     const project = req.scopedProject;
-    const { name, clientName, description, status } = req.body;
+    const { name, clientName, description, status, approximateDrawingsCount } = req.body;
 
     if (name !== undefined) project.name = name;
     if (clientName !== undefined) project.clientName = clientName;
     if (description !== undefined) project.description = description;
+    if (approximateDrawingsCount !== undefined) project.approximateDrawingsCount = Number(approximateDrawingsCount) || 0;
     if (status !== undefined) {
         if (!['active', 'on_hold', 'completed', 'archived'].includes(status)) {
             return res.status(400).json({ error: 'Invalid status value.' });
@@ -267,11 +348,29 @@ async function downloadAllProjectsStatusExcel(req, res) {
                     $sum: {
                         $cond: [
                             {
-                                $regexMatch: {
-                                    input: { $ifNull: ['$extractedFields.revision', ''] },
-                                    regex: '^(rev\\s*)?[a-z]',
-                                    options: 'i'
-                                }
+                                $or: [
+                                    {
+                                        $regexMatch: {
+                                            input: { $ifNull: ['$extractedFields.revision', ''] },
+                                            regex: '^(rev\\s*)?[a-z]',
+                                            options: 'i'
+                                        }
+                                    },
+                                    {
+                                        $regexMatch: {
+                                            input: { $ifNull: ['$extractedFields.remarks', ''] },
+                                            regex: 'approved|approval',
+                                            options: 'i'
+                                        }
+                                    },
+                                    {
+                                        $regexMatch: {
+                                            input: { $ifNull: ['$extractedFields.description', ''] },
+                                            regex: 'approved|approval',
+                                            options: 'i'
+                                        }
+                                    }
+                                ]
                             }, 1, 0
                         ]
                     }
@@ -308,9 +407,48 @@ async function downloadAllProjectsStatusExcel(req, res) {
         countMap[c._id.toString()] = c;
     });
 
+    // ── Aggregate RFI Counts ──────────────────────────────────
+    const rfiCounts = await RfiExtraction.aggregate([
+        { $match: { createdByAdminId: new mongoose.Types.ObjectId(req.principal.adminId) } },
+        { $unwind: '$rfis' },
+        {
+            $group: {
+                _id: '$projectId',
+                openRfiCount: { $sum: { $cond: [{ $eq: ['$rfis.status', 'OPEN'] }, 1, 0] } },
+                closedRfiCount: { $sum: { $cond: [{ $eq: ['$rfis.status', 'CLOSED'] }, 1, 0] } }
+            }
+        }
+    ]);
+
+    const rfiMap = {};
+    rfiCounts.forEach(r => {
+        rfiMap[r._id.toString()] = r;
+    });
+
+    // ── Aggregate Change Order Counts ──────────────────────────
+    const coCounts = await ChangeOrder.aggregate([
+        { $match: { projectId: { $in: projectIds } } },
+        {
+            $group: {
+                _id: '$projectId',
+                totalCO: { $sum: 1 },
+                approvedCO: { $sum: { $cond: [{ $eq: ['$status', 'APPROVED'] }, 1, 0] } },
+                workCompletedCO: { $sum: { $cond: [{ $eq: ['$status', 'WORK_COMPLETED'] }, 1, 0] } },
+                pendingCO: { $sum: { $cond: [{ $eq: ['$status', 'PENDING'] }, 1, 0] } }
+            }
+        }
+    ]);
+
+    const coMap = {};
+    coCounts.forEach(c => {
+        coMap[c._id.toString()] = c;
+    });
+
     // Merge project data with aggregated stats
     const projectsData = projects.map(p => {
         const stats = countMap[p._id.toString()] || {};
+        const rfiStats = rfiMap[p._id.toString()] || { openRfiCount: 0, closedRfiCount: 0 };
+        const coStats = coMap[p._id.toString()] || { totalCO: 0, approvedCO: 0, workCompletedCO: 0, pendingCO: 0 };
         return {
             ...p,
             totalDrawings: stats.totalDrawings || 0,
@@ -319,6 +457,12 @@ async function downloadAllProjectsStatusExcel(req, res) {
             holdCount: stats.holdCount || 0,
             pendingCount: stats.pendingCount || 0,
             failedCount: stats.failedCount || 0,
+            openRfiCount: rfiStats.openRfiCount,
+            closedRfiCount: rfiStats.closedRfiCount,
+            totalCO: coStats.totalCO,
+            approvedCO: coStats.approvedCO,
+            workCompletedCO: coStats.workCompletedCO,
+            pendingCO: coStats.pendingCO,
         };
     });
 

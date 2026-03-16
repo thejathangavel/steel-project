@@ -96,7 +96,9 @@ export default function AdminDashboard() {
                                 <tr>
                                     <th>Project Name</th>
                                     <th>Client</th>
-                                    <th>Drawings</th>
+                                    <th>Approx. DWGs</th>
+                                    <th>Approval %</th>
+                                    <th>Fabrication %</th>
                                     <th>Status</th>
                                     <th>Updated</th>
                                 </tr>
@@ -104,7 +106,7 @@ export default function AdminDashboard() {
                             <tbody>
                                 {!stats.recentProjects || stats.recentProjects.length === 0 ? (
                                     <tr>
-                                        <td colSpan={5} className="table-empty">
+                                        <td colSpan={7} className="table-empty">
                                             No projects yet. Create your first project.
                                         </td>
                                     </tr>
@@ -113,7 +115,23 @@ export default function AdminDashboard() {
                                         <tr key={p._id || p.id}>
                                             <td style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{p.name}</td>
                                             <td style={{ color: 'var(--color-text-secondary)' }}>{p.clientName}</td>
-                                            <td className="font-mono" style={{ color: 'var(--color-text-muted)' }}>{p.drawingCount}</td>
+                                            <td className="font-mono" style={{ color: 'var(--color-text-muted)' }}>{p.approximateDrawingsCount || 0}</td>
+                                            <td>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                    <div style={{width: 40, height: 4, background: '#e2e8f0', borderRadius: 2, overflow: 'hidden'}}>
+                                                        <div style={{width: `${p.approvalPercentage || 0}%`, height: '100%', background: 'var(--color-primary)'}} />
+                                                    </div>
+                                                    <span style={{fontSize: 11, fontWeight: 700}}>{p.approvalPercentage || 0}%</span>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                    <div style={{width: 40, height: 4, background: '#e2e8f0', borderRadius: 2, overflow: 'hidden'}}>
+                                                        <div style={{width: `${p.fabricationPercentage || 0}%`, height: '100%', background: 'var(--color-success-mid)'}} />
+                                                    </div>
+                                                    <span style={{fontSize: 11, fontWeight: 700}}>{p.fabricationPercentage || 0}%</span>
+                                                </div>
+                                            </td>
                                             <td><StatusBadge status={p.status} /></td>
                                             <td style={{ color: 'var(--color-text-muted)', fontSize: 12.5 }}>
                                                 {new Date(p.updatedAt).toLocaleDateString('en-US', {

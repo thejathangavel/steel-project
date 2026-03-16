@@ -96,6 +96,8 @@ export default function UserDashboard() {
                                     <tr>
                                         <th>Project Name</th>
                                         <th>Client</th>
+                                        <th>Approval %</th>
+                                        <th>Fabrication %</th>
                                         <th>Your Role</th>
                                         <th>Status</th>
                                         <th>Updated</th>
@@ -104,7 +106,7 @@ export default function UserDashboard() {
                                 <tbody>
                                     {projects.length === 0 ? (
                                         <tr>
-                                            <td colSpan={5} className="table-empty">
+                                            <td colSpan={7} className="table-empty">
                                                 No projects assigned yet. Contact your administrator.
                                             </td>
                                         </tr>
@@ -113,6 +115,22 @@ export default function UserDashboard() {
                                             <tr key={p.id}>
                                                 <td style={{ fontWeight: 700 }}>{p.name}</td>
                                                 <td style={{ color: 'var(--color-text-secondary)' }}>{p.clientName}</td>
+                                                <td>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                        <div style={{width: 40, height: 4, background: '#e2e8f0', borderRadius: 2, overflow: 'hidden'}}>
+                                                            <div style={{width: `${p.approvalPercentage || 0}%`, height: '100%', background: 'var(--color-primary)'}} />
+                                                        </div>
+                                                        <span style={{fontSize: 11, fontWeight: 700}}>{p.approvalPercentage || 0}%</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                        <div style={{width: 40, height: 4, background: '#e2e8f0', borderRadius: 2, overflow: 'hidden'}}>
+                                                            <div style={{width: `${p.fabricationPercentage || 0}%`, height: '100%', background: 'var(--color-success-mid)'}} />
+                                                        </div>
+                                                        <span style={{fontSize: 11, fontWeight: 700}}>{p.fabricationPercentage || 0}%</span>
+                                                    </div>
+                                                </td>
                                                 <td>
                                                     <span className={`role-chip ${p.permission}`}>
                                                         {p.permission ? p.permission.charAt(0).toUpperCase() + p.permission.slice(1) : 'Viewer'}

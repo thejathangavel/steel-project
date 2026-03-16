@@ -5,20 +5,23 @@ import argparse
 import re
 import traceback
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field
+
+# --- Dependency handling ---
+try:
+    from pydantic import BaseModel, Field
+except ImportError:
+    class Field:
+        def __init__(self, default=None, **kwargs): self.default = default
+    class BaseModel:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items(): setattr(self, k, v)
+        @classmethod
+        def parse_obj(cls, obj): return cls(**obj)
 
 try:
     import pdfplumber
 except ImportError:
     pdfplumber = None
-
-try:
-    import pytesseract
-    from pdf2image import convert_from_path
-except ImportError:
-    pytesseract = None
-    convert_from_path = None
-
 
 
 # ── Pydantic schemas ───────────────────────────────────────
@@ -111,25 +114,14 @@ def clean_rem(s):
 def get_date_val(r):
     d = r.get("date", "")
     m = re.search(r'(\d+)[-/](\d+)[-/](\d+)', d)
-    if m:
+    if not m: return "00000000"
+    try:
         p1, p2, p3 = int(m.group(1)), int(m.group(2)), int(m.group(3))
-
-        # YYYY-MM-DD (e.g. 2025-09-25)
-        if p1 > 31:
-            y, mo, da = p1, p2, p3
-
-        # MM-DD-YYYY or DD-MM-YYYY (e.g. 09-25-2025)
-        elif p3 > 31:
+        if p1 > 1900: y, mo, da = p1, p2, p3 # YYYY-MM-DD
+        elif p3 > 1900:
             y = p3
-            if p2 > 12:
-                # p2 must be day → p1 is month (MM-DD-YYYY)
-                mo, da = p1, p2
-            elif p1 > 12:
-                # p1 must be day → p2 is month (DD-MM-YYYY)
-                mo, da = p2, p1
-            else:
-                # Both ≤12; assume MM-DD-YYYY (common in US steel drawings)
-                mo, da = p1, p2
+            if p2 > 12: mo, da = p1, p2 # p1=MM, p2=DD
+            else: mo, da = p2, p1 # default to DD-MM (international)
         else:
             # Fallback: treat as DD-MM-YY
             y = p3 + 2000 if p3 < 100 else p3
@@ -269,7 +261,7 @@ def normalize_fields(fields: dict) -> dict:
     return fields
 
 
-def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict:
+def extract_locally(pdf_path: str) -> dict:
     fields = {
         "drawingNumber": "",
         "drawingTitle": "",
@@ -291,58 +283,7 @@ def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict
     try:
         with pdfplumber.open(pdf_path) as pdf:
             page = pdf.pages[0]
-            
-            # Stage 1-5 Mode Handling
-            if extraction_mode == "ocr":
-                if pytesseract and convert_from_path:
-                    try:
-                        images = convert_from_path(pdf_path, first_page=1, last_page=1, dpi=300)
-                        if images:
-                            text = pytesseract.image_to_string(images[0])
-                        else:
-                            text = ""
-                    except Exception:
-                        text = ""
-                else:
-                    text = ""
-            elif extraction_mode == "geometric":
-                words = page.extract_words(x_tolerance=1, y_tolerance=1)
-                if not words:
-                    text = ""
-                else:
-                    words.sort(key=lambda w: w['top'])
-                    lines = []
-                    curr = [words[0]]
-                    ctop, cbot = words[0]['top'], words[0]['bottom']
-                    for w in words[1:]:
-                        cy = (w['top'] + w['bottom']) / 2
-                        if ctop - 4 <= cy <= cbot + 4:
-                            curr.append(w)
-                            ctop = min(ctop, w['top'])
-                            cbot = max(cbot, w['bottom'])
-                        else:
-                            lines.append(curr)
-                            curr = [w]
-                            ctop, cbot = w['top'], w['bottom']
-                    if curr:
-                        lines.append(curr)
-                    final_text = []
-                    for l in lines:
-                        l.sort(key=lambda x: x['x0'])
-                        line_str = ''
-                        prev_x1 = -999
-                        for w in l:
-                            if prev_x1 != -999 and w['x0'] - prev_x1 > 5.0:
-                                line_str += ' '
-                            line_str += w['text']
-                            prev_x1 = w['x1']
-                        final_text.append(line_str.strip())
-                    text = '\n'.join(final_text)
-            elif extraction_mode == "raw":
-                text = page.extract_text(layout=False) or ""
-            else: # "layout"
-                text = page.extract_text(layout=True, x_tolerance=2.0) or ""
-
+            text = page.extract_text(layout=True, x_tolerance=2.0)
             if not text:
                 return fields
 
@@ -494,11 +435,6 @@ def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict
                 norm_mark = re.sub(r'^REV[\s\-_]*', '', str(mark).strip(), flags=re.I).strip().upper()
                 if not norm_mark or norm_mark in seen_marks:
                     return
-                
-                # Validate standard revision mark (Only A, B, C or 0, 1, 2 as requested)
-                if not re.match(r'^([A-C0-2])$', norm_mark):
-                    return
-                    
                 # Skip obvious noise tokens
                 if norm_mark in ('NO', 'BY', 'OK', 'TO', 'OF', 'IN', 'IS', 'IT',
                                  'DATE', 'MARK', 'ISSUE', 'REVISION', 'COPIES', 'DESTINATION',
@@ -528,8 +464,8 @@ def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict
                 r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{1,2}[\s,]+\d{4})\b',
                 re.I
             )
-            # A cell that looks like a valid revision mark (only A, B, C or 0, 1, 2)
-            MARK_CELL  = re.compile(r'^[A-C0-2]$', re.I)
+            # A cell that looks like a valid revision mark (single letter or 1-2 digits)
+            MARK_CELL  = re.compile(r'^[A-Z0-9]{1,2}$', re.I)
 
             def _try_table_extraction(pdf_page):
                 """
@@ -637,7 +573,7 @@ def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict
                 # Pattern 1: leading row-number  e.g. "1  A  Issued for Approval  28-01-2026"
                 # Handles both MM-DD-YYYY and DD-MM-YYYY formats
                 rev_rows_new = re.findall(
-                    r'^[ \t]*(\d+)[ \t]+([A-C0-2])[ \t]+(.*?)[ \t]+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})[ \t]*$',
+                    r'^[ \t]*(\d+)[ \t]+([A-Z0-9]{1,2})[ \t]+(.*?)[ \t]+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})[ \t]*$',
                     clean_text, re.I | re.M
                 )
                 for r in rev_rows_new:
@@ -645,7 +581,7 @@ def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict
 
                 # Pattern 2: mark  initials  "Mon DD YYYY"  description
                 rev_rows_date_first = re.findall(
-                    r'\b([A-C0-2]|REV[ \t][A-C0-2])\b[ \t]+(?:[A-Z]{2,4}[ \t]+)?\b([A-Z]{3,}[ \t]+\d{1,2}[ \t]*,?[ \t]*\d{4})\b[ \t]+(.*)',
+                    r'\b([A-Z0-9]{1,2}|REV[ \t][A-Z0-9]{1,2})\b[ \t]+(?:[A-Z]{2,4}[ \t]+)?\b([A-Z]{3,}[ \t]+\d{1,2}[ \t]*,?[ \t]*\d{4})\b[ \t]+(.*)',
                     clean_text, re.I
                 )
                 for r in rev_rows_date_first:
@@ -653,7 +589,7 @@ def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict
 
                 # Pattern 3: mark  initials  description  "Mon DD YYYY"
                 rev_rows_desc_first = re.findall(
-                    r'\b([A-C0-2]|REV[ \t][A-C0-2])\b[ \t]+(?:[A-Z]{2,4}[ \t]+)?(.*?)[ \t]+\b([A-Z]{3,}[ \t]+\d{1,2}[ \t]*,?[ \t]*\d{4})\b(.*)',
+                    r'\b([A-Z0-9]{1,2}|REV[ \t][A-Z0-9]{1,2})\b[ \t]+(?:[A-Z]{2,4}[ \t]+)?(.*?)[ \t]+\b([A-Z]{3,}[ \t]+\d{1,2}[ \t]*,?[ \t]*\d{4})\b(.*)',
                     clean_text, re.I
                 )
                 for r in rev_rows_desc_first:
@@ -662,7 +598,7 @@ def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict
                 # Pattern 4 (fallback): mark  initials  DD-MM-YYYY or YYYY-MM-DD  description
                 if not fields["revisionHistory"]:
                     rev_num = re.findall(
-                        r'\b([A-C0-2])\b[ \t]+(?:[A-Z]{2,4}[ \t]+)?(?:.*?)[ \t]*\b(\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})\b[ \t]+(.*)',
+                        r'\b([A-Z0-9]{1,2})\b[ \t]+(?:[A-Z]{2,4}[ \t]+)?(?:.*?)[ \t]*\b(\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})\b[ \t]+(.*)',
                         clean_text, re.I
                     )
                     for r in rev_num:
@@ -671,67 +607,11 @@ def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict
                 # Pattern 5 (broad fallback): "A  Issued for Approval  28/01/2026"
                 if not fields["revisionHistory"]:
                     rev_broad = re.findall(
-                        r'\b([A-C0-2])[ \t]+(Issued[ \t]+for[ \t]+\w+(?:[ \t]+\w+)?)[ \t]+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
+                        r'\b([A-Z0-9]{1,2})[ \t]+(Issued[ \t]+for[ \t]+\w+(?:[ \t]+\w+)?)[ \t]+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
                         clean_text, re.I
                     )
                     for r in rev_broad:
                         _add_rev(r[0], r[2], r[1])
-                        
-                # Pattern 6: DD-MM-YYYY mark description
-                if not fields["revisionHistory"]:
-                    rev_date_first = re.findall(
-                        r'\b(\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})\b[ \t]+\b([A-C0-2]|REV[ \t][A-C0-2])\b[ \t]+(.*)',
-                        clean_text, re.I
-                    )
-                    for r in rev_date_first:
-                        _add_rev(r[1], r[0], r[2])
-
-            # FLEXIBLE FIELD DETECTION (Keywords & Multi-Region & Destination Mapping)
-            if not fields["revisionHistory"]:
-                # Try table-like row: # of Copies | Revision | Destination | Date
-                # Example: ... GRADE: A36  1 0 FOR FABRICATION 09-22-2025
-                row_pattern = re.findall(
-                    r'\b(\d+)[ \t]+([A-Z]|\d{1,2})[ \t]+([A-Za-z][A-Za-z\s]*?)[ \t]+(\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4})\b',
-                    clean_text, re.I
-                )
-                for r in row_pattern:
-                    val_dest = r[2].strip()
-                    val_dest_up = val_dest.upper()
-                    if val_dest_up == "FORFABRICATION": val_dest = "FOR FABRICATION"
-                    elif val_dest_up == "FORAPPROVAL": val_dest = "FOR APPROVAL"
-                    elif val_dest_up == "FORCONSTRUCTION": val_dest = "FOR CONSTRUCTION"
-
-                    if val_dest.upper() in ["FOR FABRICATION", "FOR APPROVAL", "FOR CONSTRUCTION", "ISSUED FOR APPROVAL", "ISSUED FOR FABRICATION"]:
-                        _add_rev(r[1], r[3], val_dest)
-                    else:
-                        _add_rev(r[1], r[3], val_dest)
-
-            if not fields["revisionHistory"]:
-                # Broad text regex fallback for scattered tables without lines
-                # Group 1: Mark, Group 3: Dest/Remarks, Group 4: Date
-                scattered_pattern = re.findall(
-                    r'\bREV(?:ISION)?\s*([A-Z0-9]{1,2})\b.*?(?:REMARKS|DESTINATION|STATUS)\s*([A-Za-z\s]{3,25}?).*?(?:DATE)\s*(\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4})',
-                    clean_text, re.I | re.DOTALL
-                )
-                for r in scattered_pattern:
-                    _add_rev(r[0], r[2], r[1].strip())
-
-            if not fields["revisionHistory"]:
-                # Individual keyword extraction across entire page
-                # Date detection keywords
-                date_kw = re.search(r'\b(?:DATE|ISSUE\s+DATE|DRAWING\s+DATE)\s*[:.\-\|]?\s*(\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}|\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2})', clean_text, re.I)
-                # Remarks detection keywords
-                rem_kw = re.search(r'\b(?:REMARKS|DESTINATION|STATUS)\s*[:.\-\|]?\s*([A-Za-z\s]+?)(?=\s\s+|\n|$)', clean_text, re.I)
-                # Revision detection keywords
-                rev_kw = re.search(r'\b(?:REV|REVISION|REVISION/ISSUE)\s*[:.\-\|]?\s*([A-Z]|\d{1,2})\b', clean_text, re.I)
-                
-                if rev_kw or date_kw or rem_kw:
-                    r_mark = rev_kw.group(1) if rev_kw else ("0" if date_kw else "0")
-                    r_date = date_kw.group(1) if date_kw else ""
-                    r_rem = rem_kw.group(1).strip() if rem_kw else ""
-                    
-                    if r_mark and r_mark not in ('NO', 'BY', 'OK', 'TO', 'OF', 'IN', 'IS', 'IT', 'DATE'):
-                         _add_rev(r_mark, r_date, r_rem)
 
             # Sort chronologically (date ascending) so history is in order
             fields["revisionHistory"].sort(key=get_date_val)
@@ -745,7 +625,7 @@ def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict
             else:
                 # Absolute fallback: if text OCR was destroyed by vertical text/grids,
                 # check if the filename ends in _[REV] or -[REV]. e.g. "06D1005_A.pdf" -> "A"
-                rev_match = re.search(r'[_ -]+([A-C0-2])\.pdf$', os.path.basename(pdf_path), re.I)
+                rev_match = re.search(r'[_ -]+([A-Za-z0-9]{1,2})\.pdf$', os.path.basename(pdf_path), re.I)
                 if rev_match:
                     rev_candidate = rev_match.group(1).upper()
                     if rev_candidate not in ('ND', 'TH', 'ST'):
@@ -756,103 +636,17 @@ def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict
     return fields
 
 
-def extract_locally(pdf_path: str) -> dict:
-    # ── Stage 1 & 2: Standard Text Extraction & Table Detection ──
-    fields = extract_locally_pass(pdf_path, extraction_mode="layout")
-    
-    def is_missing_required(f):
-        req = ["drawingNumber", "drawingTitle", "revision", "date", "remarks"]
-        # If any is totally empty, return True
-        return not all(str(f.get(k, "")).strip() for k in req)
-
-    # ── Stage 3: Coordinate Region / Geometric Interleaved Text Pass ──
-    if is_missing_required(fields):
-        f_geo = extract_locally_pass(pdf_path, extraction_mode="geometric")
-        for k in ["drawingNumber", "drawingTitle", "revision", "date", "remarks", "revisionHistory"]:
-            if not fields.get(k) and f_geo.get(k):
-                fields[k] = f_geo[k]
-                
-    # ── Stage 4: OCR Fallback ──
-    if is_missing_required(fields):
-        try:
-            f_ocr = extract_locally_pass(pdf_path, extraction_mode="ocr")
-            for k in ["drawingNumber", "drawingTitle", "revision", "date", "remarks", "revisionHistory"]:
-                if not fields.get(k) and f_ocr.get(k):
-                    fields[k] = f_ocr[k]
-        except Exception:
-            pass
-            
-    # ── Stage 5: Regex Validation Pass (Raw Layout=False) ──
-    if is_missing_required(fields):
-        f_raw = extract_locally_pass(pdf_path, extraction_mode="raw")
-        for k in ["drawingNumber", "drawingTitle", "revision", "date", "remarks", "revisionHistory"]:
-            if not fields.get(k) and f_raw.get(k):
-                fields[k] = f_raw[k]
-
-    # Post-process missing spaces
-    if fields.get("remarks"):
-        r_up = fields["remarks"].upper()
-        if r_up == "FORFABRICATION": fields["remarks"] = "FOR FABRICATION"
-        elif r_up == "FORAPPROVAL": fields["remarks"] = "FOR APPROVAL"
-        elif r_up == "FORCONSTRUCTION": fields["remarks"] = "FOR CONSTRUCTION"
-
-    if fields.get("revisionHistory"):
-        for rev_entry in fields["revisionHistory"]:
-            entry_up = rev_entry["remarks"].upper()
-            if entry_up == "FORFABRICATION": rev_entry["remarks"] = "FOR FABRICATION"
-            elif entry_up == "FORAPPROVAL": rev_entry["remarks"] = "FOR APPROVAL"
-            elif entry_up == "FORCONSTRUCTION": rev_entry["remarks"] = "FOR CONSTRUCTION"
-
-    return fields
-
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("pdf_path", help="Path to PDF file")
-    parser.add_argument("--api_key", default="", help="Removed - Not Used")
+    parser.add_argument("pdf_path")
+    parser.add_argument("--original_filename", default="")
     args = parser.parse_args()
-
-    pdf_path = args.pdf_path
-
-    if not os.path.exists(pdf_path):
-        print(json.dumps({"success": False, "error": f"File not found: {pdf_path}"}))
-        sys.exit(1)
-
     try:
-        raw_dict = extract_locally(pdf_path)
-        fields = {
-            "drawingNumber":      raw_dict.get("drawingNumber",      ""),
-            "drawingTitle":       raw_dict.get("drawingTitle",       ""),
-            "description":        raw_dict.get("description",        ""),
-            "drawingDescription": raw_dict.get("drawingDescription", ""),
-            "revision":           raw_dict.get("revision",           ""),
-            "date":               raw_dict.get("date",               ""),
-            "scale":              raw_dict.get("scale",              ""),
-            "clientName":         raw_dict.get("clientName",         ""),
-            "projectName":        raw_dict.get("projectName",        ""),
-            "remarks":            raw_dict.get("remarks",            ""),
-            "revisionHistory":    raw_dict.get("revisionHistory", [])
-        }
-
-        validation = validate_fields(fields)
-        fields = normalize_fields(fields)
-        confidence = compute_confidence(fields, validation)
-
-        print(json.dumps({
-            "success":    True,
-            "confidence": confidence,
-            "fields":     fields,
-            "validation": validation,
-        }))
-
-    except Exception as e:
-        print(json.dumps({
-            "success": False,
-            "error":   str(e),
-            "trace":   traceback.format_exc(),
-        }))
+        raw_out = extract_locally(args.pdf_path, args.original_filename)
+        print(json.dumps({"success": True, "fields": raw_out}))
+    except:
+        print(json.dumps({"success": False, "error": traceback.format_exc()}))
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

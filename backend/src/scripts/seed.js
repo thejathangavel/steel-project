@@ -36,7 +36,9 @@ async function seed() {
     for (const a of SEED_ADMINS) {
         const exists = await Admin.findOne({ username: a.username });
         if (exists) {
-            console.log(`  ✓ ${a.username} already exists (id: ${exists._id})`);
+            console.log(`  ↺ Updating password for existing admin: ${a.username}`);
+            exists.password_hash = a.password_hash; // pre-save hook will hash it
+            await exists.save();
             adminDocs.push(exists);
         } else {
             const doc = await Admin.create(a);
@@ -66,7 +68,9 @@ async function seed() {
     for (const u of [...admin1Users, ...admin2Users]) {
         const exists = await User.findOne({ username: u.username, adminId: u.adminId });
         if (exists) {
-            console.log(`  ✓ ${u.username} (adminId: ${u.adminId}) already exists`);
+            console.log(`  ↺ Updating password for existing user: ${u.username}`);
+            exists.password_hash = u.password_hash; // pre-save hook will hash it
+            await exists.save();
             userDocs[u.username] = exists;
         } else {
             const doc = await User.create(u);
