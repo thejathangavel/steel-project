@@ -75,7 +75,7 @@ function formatDescription(raw) {
  *   - Data rows with alternating white/light-grey backgrounds
  *   - "CONFIRMED" responses highlighted in yellow with red bold text
  */
-exports.generateRfiLogExcel = async (rfiExtractions, projectDetails, baseUrl) => {
+exports.generateRfiLogExcel = async (rfiExtractions, projectDetails, baseUrl, isExternal = false) => {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'System';
     workbook.created = new Date();
@@ -241,6 +241,7 @@ exports.generateRfiLogExcel = async (rfiExtractions, projectDetails, baseUrl) =>
                 refDrawing: rfi.refDrawing || doc.originalFileName,
                 skNumber: computedSk,
                 sentOn: rfi.sentOn || doc.sentOn || '',
+                fileUrl: doc.fileUrl,
             });
         });
     });
@@ -287,10 +288,33 @@ exports.generateRfiLogExcel = async (rfiExtractions, projectDetails, baseUrl) =>
         sentOnCell.value = sentOnStr;
         sentOnCell.style = { font: { size: 10 }, fill: rowFill, alignment: { vertical: 'middle', horizontal: 'center' }, border: commonBorder };
 
-        // SK #
+        // SK # — with hyperlink to the original PDF per user request
         const skCell = dataRow.getCell(3);
-        skCell.value = skNum;
-        skCell.style = { font: { size: 10 }, fill: rowFill, alignment: { vertical: 'middle', horizontal: 'center' }, border: commonBorder };
+        const resolvedBase = (baseUrl || '').toString().replace(/\/$/, '');
+        
+        let href = '';
+        if (resolvedBase) {
+            if (isExternal) {
+                const fileName = item.refDrawing || '';
+                href = `${resolvedBase}/${encodeURIComponent(fileName)}`;
+            } else {
+                // item.fileUrl usually starts with "/uploads/..."
+                href = (item.fileUrl) ? `${resolvedBase}${item.fileUrl}` : '';
+            }
+        }
+
+        if (href) {
+            skCell.value = { text: skNum, hyperlink: href };
+            skCell.style = {
+                font: { size: 10, color: { argb: 'FF2563EB' }, underline: true },
+                fill: rowFill,
+                alignment: { vertical: 'middle', horizontal: 'center' },
+                border: commonBorder
+            };
+        } else {
+            skCell.value = skNum;
+            skCell.style = { font: { size: 10 }, fill: rowFill, alignment: { vertical: 'middle', horizontal: 'center' }, border: commonBorder };
+        }
 
         // Ref. Drawing
         const refCell = dataRow.getCell(4);
@@ -358,9 +382,8 @@ exports.generateRfiLogExcel = async (rfiExtractions, projectDetails, baseUrl) =>
 
         // Link to Source — hyperlink to the original PDF
         const linkCell = dataRow.getCell(10);
-        const fileName = item.refDrawing || '';
-        const resolvedBase = (baseUrl || '').toString().replace(/\/$/, '');
-        const href = resolvedBase ? `${resolvedBase}/${encodeURIComponent(fileName)}` : '';
+        
+        // Use the same href logic as SK # column
         if (href) {
             linkCell.value = { text: 'View PDF', hyperlink: href };
             linkCell.style = {

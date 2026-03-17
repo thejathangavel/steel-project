@@ -113,6 +113,12 @@ def normalize_date_string(date_str):
     return d
 
 
+def is_date_pattern(s):
+    if not s: return False
+    return bool(re.search(r'\d{1,2}\s*[-/\.]\s*\d{1,2}\s*[-/\.]\s*(?:20\d{2}|19\d{2}|\d{2})|'
+                          r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{1,2}[\s,]+\d{4}', s, re.I))
+
+
 def strip_leading_date(s):
     """Remove a date at the start of a string, return remaining text."""
     cleaned = re.sub(
@@ -519,6 +525,13 @@ def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict
             if client_match:
                 fields["clientName"] = client_match.group(1).strip()
 
+            # 1b. Remarks/Status in title block area
+            m_rem_tb = re.search(r'\b(?:REMARKS|STATUS|NOTE[S]?)\b\s*[:.\-]+\s*([A-Z\s0-9\-_]{2,50})', text, re.I)
+            if m_rem_tb:
+                rem_val = m_rem_tb.group(1).strip()
+                if len(rem_val) > 1 and not is_date_pattern(rem_val):
+                    fields["remarks"] = rem_val
+
             # ─────────────────────────────────────────────────────────────
             # --- 4. Revisions ---
             # Phase 1: Try pdfplumber structured table extraction first.
@@ -604,28 +617,37 @@ def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict
                         has_date = any(DATE_HDR.search(c) for c in row_joined)
                         if has_rev and has_date:
                             header_idx = row_i
+                            # Pick best columns for this header row
+                            best_rev_score = -1
+                            best_date_score = -1
+                            best_desc_score = -1
+                            
                             for ci, cell in enumerate(row_joined):
-                                if col_date is None and DATE_HDR.search(cell):
+                                if len(cell) > 40: continue # Skip huge cells as headers
+                                
+                                if DATE_HDR.search(cell):
                                     col_date = ci
-                                if col_rev is None and REV_HDR.search(cell):
+                                if REV_HDR.search(cell):
                                     col_rev = ci
-                                if col_desc is None and DESC_HDR.search(cell):
+                                if DESC_HDR.search(cell):
                                     col_desc = ci
                             break
 
                     if header_idx is None or col_rev is None or col_date is None:
                         continue
 
-                    # If no description column found, pick the column that is neither rev nor date
-                    if header_idx is not None:
+                    # If no description column found, pick the column closest to date
+                    if col_desc is None and col_date is not None and header_idx is not None:
                         h_idx: Any = header_idx
-                        header_row = [x for x in (table_list[h_idx] if 0 <= h_idx < len(table_list) else [])] # type: ignore
-                        all_cols = set(range(len(header_row)))
-                        used_cols = {i for i in [col_rev, col_date] if i is not None}
-                        if col_desc is None:
-                            remaining = sorted(all_cols - used_cols)
-                            if remaining:
-                                col_desc = remaining[0]
+                        header_row = list(table_list[h_idx]) if 0 <= h_idx < len(table_list) else [] # type: ignore
+                        num_cols = len(header_row)
+                        best_dist = 999
+                        for j in range(num_cols):
+                            if j != col_rev and j != col_date:
+                                dist = abs(j - col_date)
+                                if dist < best_dist:
+                                    best_dist = dist
+                                    col_desc = j
 
                     # ── Determine data row range ───────────────────────────────
                     # Header at top  → data rows come AFTER it
@@ -730,6 +752,20 @@ def extract_locally_pass(pdf_path: str, extraction_mode: str = "layout") -> dict
                     )
                     for r in rev_num:
                         _add_rev(r[0], r[1], r[2])
+
+                # Pattern 9: Generic mark + description + date (line-based)
+                if not fields["revisionHistory"]:
+                    for line in clean_text.splitlines():
+                        m = re.search(r'^\s*([A-Z0-9]{1,2})\b[ \t]+(?:[A-Z]{2,3}[ \t]+)?(.*?)[ \t]+(\d{1,2}\s*[-/]\s*\d{1,2}\s*[-/]\s*(?:20\d{2}|19\d{2}|\d{2}))\s*$', line, re.I)
+                        if m:
+                            _add_rev(m.group(1), m.group(3), m.group(2))
+
+                # Pattern 10: Generic mark + date + description (line-based)
+                if not fields["revisionHistory"]:
+                    for line in clean_text.splitlines():
+                        m = re.search(r'^\s*([A-Z0-9]{1,2})\b[ \t]+(?:[A-Z]{2,3}[ \t]+)?(\d{1,2}\s*[-/]\s*\d{1,2}\s*[-/]\s*(?:20\d{2}|19\d{2}|\d{2}))[ \t]+(.*?)\s*$', line, re.I)
+                        if m:
+                            _add_rev(m.group(1), m.group(2), m.group(3))
 
                 # Pattern 5 (broad fallback): "A  Issued for Approval  28/01/2026"
                 if not fields["revisionHistory"]:

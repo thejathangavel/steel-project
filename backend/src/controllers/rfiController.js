@@ -85,8 +85,12 @@ exports.downloadRfiExcel = async (req, res) => {
             return res.status(404).json({ error: 'No completed RFI extractions found.' });
         }
 
-        const baseUrl = req.query.baseUrl || '';
-        const { buffer, filename } = await generateRfiLogExcel(extractions, {}, baseUrl);
+        const serverOrigin = `${req.protocol}://${req.get('host')}`;
+        const queryBase = req.query.baseUrl || '';
+        const baseUrl = queryBase || serverOrigin;
+        const isExternal = !!queryBase;
+
+        const { buffer, filename } = await generateRfiLogExcel(extractions, {}, baseUrl, isExternal);
 
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

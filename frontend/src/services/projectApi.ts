@@ -43,6 +43,7 @@ export async function adminCreateProject(data: {
     description?: string;
     status?: ProjectStatus;
     approximateDrawingsCount?: number;
+    location?: string;
 }): Promise<{ project: Project }> {
     const res = await fetch(`${BASE}/admin/projects`, {
         method: 'POST',
@@ -134,6 +135,28 @@ interface CreateProjectForm {
     description: string;
     status: ProjectStatus;
     approximateDrawingsCount: number;
+    location: string;
+}
+
+/**
+ * Upload COR Excel (Admin)
+ */
+export async function adminUploadCOR(projectId: string, file: File): Promise<{ message: string }> {
+    const stored = sessionStorage.getItem('sdms_user');
+    const token = stored ? JSON.parse(stored).token : '';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch(`${BASE}/admin/projects/${projectId}/cor`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`
+            // Note: browser sets boundary if Content-Type is NOT set manually for FormData
+        },
+        body: formData
+    });
+    return handleResponse(res);
 }
 
 /**
