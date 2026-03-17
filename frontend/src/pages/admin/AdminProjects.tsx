@@ -16,8 +16,9 @@ const STATUS_CLS: Record<ProjectStatus, string> = {
 interface CreateProjectForm {
     name: string; clientName: string; description: string; status: ProjectStatus;
     approximateDrawingsCount: string;
+    location: string;
 }
-const DEFAULT_FORM: CreateProjectForm = { name: '', clientName: '', description: '', status: 'active', approximateDrawingsCount: '0' };
+const DEFAULT_FORM: CreateProjectForm = { name: '', clientName: '', description: '', status: 'active', approximateDrawingsCount: '0', location: '' };
 
 export default function AdminProjects() {
     const navigate = useNavigate();
@@ -59,7 +60,7 @@ export default function AdminProjects() {
     );
 
     async function handleCreate() {
-        if (!form.name.trim() || !form.clientName.trim()) return;
+        if (!form.name.trim() || !form.clientName.trim() || !form.location) return;
         try {
             setActionLoading(true);
             setError('');
@@ -69,6 +70,7 @@ export default function AdminProjects() {
                 description: form.description.trim(),
                 status: form.status,
                 approximateDrawingsCount: Number(form.approximateDrawingsCount) || 0,
+                location: form.location,
             });
 
             const newProject = {
@@ -101,7 +103,7 @@ export default function AdminProjects() {
     }
 
     async function handleEditSave() {
-        if (!editTarget) return;
+        if (!editTarget || !editTarget.location) return;
         try {
             setActionLoading(true);
             setError('');
@@ -110,7 +112,8 @@ export default function AdminProjects() {
                 clientName: editTarget.clientName,
                 description: editTarget.description,
                 status: editTarget.status,
-                approximateDrawingsCount: editTarget.approximateDrawingsCount
+                approximateDrawingsCount: editTarget.approximateDrawingsCount,
+                location: editTarget.location
             });
 
             // Re-map with consistent ID
@@ -313,6 +316,15 @@ export default function AdminProjects() {
                                     value={form.approximateDrawingsCount} onChange={(e) => setForm({ ...form, approximateDrawingsCount: e.target.value })} />
                             </div>
                             <div className="form-group">
+                                <label className="form-label required">Location</label>
+                                <select className="form-control" value={form.location}
+                                    onChange={(e) => setForm({ ...form, location: e.target.value })}>
+                                    <option value="">Select Location</option>
+                                    <option value="Chennai">Chennai</option>
+                                    <option value="Hosur">Hosur</option>
+                                </select>
+                            </div>
+                            <div className="form-group">
                                 <label className="form-label">Initial Status</label>
                                 <select className="form-control" value={form.status}
                                     onChange={(e) => setForm({ ...form, status: e.target.value as ProjectStatus })}>
@@ -324,7 +336,7 @@ export default function AdminProjects() {
                                     onClick={() => { setShowCreate(false); setForm(DEFAULT_FORM); }}>Cancel</button>
                                 <button className="btn btn-primary"
                                     onClick={handleCreate}
-                                    disabled={!form.name.trim() || !form.clientName.trim() || actionLoading}>
+                                    disabled={!form.name.trim() || !form.clientName.trim() || !form.location || actionLoading}>
                                     {actionLoading ? 'Creating...' : 'Create Project'}
                                 </button>
                             </div>
@@ -361,6 +373,15 @@ export default function AdminProjects() {
                                 <label className="form-label required">Approximate Drawings Count</label>
                                 <input className="form-control" type="number" value={editTarget.approximateDrawingsCount}
                                     onChange={(e) => setEditTarget({ ...editTarget, approximateDrawingsCount: Number(e.target.value) })} />
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label">Location</label>
+                                <select className="form-control" value={editTarget.location}
+                                    onChange={(e) => setEditTarget({ ...editTarget, location: e.target.value })}>
+                                    <option value="">Select Location</option>
+                                    <option value="Chennai">Chennai</option>
+                                    <option value="Hosur">Hosur</option>
+                                </select>
                             </div>
                             <div className="form-group">
                                 <label className="form-label">Status</label>

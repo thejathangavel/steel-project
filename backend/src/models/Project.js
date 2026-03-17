@@ -62,6 +62,12 @@ const projectSchema = new mongoose.Schema(
             default: 'active',
         },
 
+        location: {
+            type: String,
+            enum: ['Chennai', 'Hosur', ''],
+            default: '',
+        },
+
         // ── Multi-Tenant Key ──────────────────────────────────
         /**
          * createdByAdminId: The Admin who owns this project.

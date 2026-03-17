@@ -58,7 +58,7 @@ export default function AdminDashboard() {
             </div>
 
             {/* ── Stat Cards ── */}
-            <div className="stats-grid">
+            <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
                 <div className="stat-card accent-blue">
                     <div className="stat-card-label">My Projects</div>
                     <div className="stat-card-value">{stats.totalProjects}</div>
@@ -67,11 +67,6 @@ export default function AdminDashboard() {
                 <div className="stat-card accent-green">
                     <div className="stat-card-label">My Users</div>
                     <div className="stat-card-value">{stats.totalUsers}</div>
-                </div>
-
-                <div className="stat-card accent-amber">
-                    <div className="stat-card-label">Total Drawings</div>
-                    <div className="stat-card-value">{stats.totalDrawings}</div>
                 </div>
 
                 <div className="stat-card accent-slate">

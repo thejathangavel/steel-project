@@ -174,7 +174,7 @@ async function listProjects(req, res) {
  */
 async function createProject(req, res) {
     const adminId = req.principal.adminId;
-    const { name, clientName, description, status, approximateDrawingsCount } = req.body;
+    const { name, clientName, description, status, approximateDrawingsCount, location } = req.body;
 
     if (!name || !clientName) {
         return res.status(400).json({ error: 'name and clientName are required.' });
@@ -185,6 +185,7 @@ async function createProject(req, res) {
         clientName,
         description: description || '',
         status: status || 'active',
+        location: location || '',
         approximateDrawingsCount: Number(approximateDrawingsCount) || 0,
         createdByAdminId: adminId,
         assignments: [
@@ -215,12 +216,13 @@ async function getProject(req, res) {
  */
 async function updateProject(req, res) {
     const project = req.scopedProject;
-    const { name, clientName, description, status, approximateDrawingsCount } = req.body;
+    const { name, clientName, description, status, approximateDrawingsCount, location } = req.body;
 
     if (name !== undefined) project.name = name;
     if (clientName !== undefined) project.clientName = clientName;
     if (description !== undefined) project.description = description;
     if (approximateDrawingsCount !== undefined) project.approximateDrawingsCount = Number(approximateDrawingsCount) || 0;
+    if (location !== undefined) project.location = location;
     if (status !== undefined) {
         if (!['active', 'on_hold', 'completed', 'archived'].includes(status)) {
             return res.status(400).json({ error: 'Invalid status value.' });
@@ -473,6 +475,90 @@ async function downloadAllProjectsStatusExcel(req, res) {
     res.send(buffer);
 }
 
+/**
+ * POST /api/admin/projects/:projectId/cor
+ * Upload COR Excel file and parse into ChangeOrder model.
+ */
+async function uploadCOR(req, res) {
+    const project = req.scopedProject;
+    const adminId = req.principal.adminId;
+
+    if (!req.file) {
+        return res.status(400).json({ error: 'No Excel file uploaded.' });
+    }
+
+    try {
+        const ExcelJS = require('exceljs');
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.readFile(req.file.path);
+
+        const worksheet = workbook.getWorksheet(1); // Read first sheet
+        if (!worksheet) {
+            return res.status(400).json({ error: 'No worksheet found in Excel.' });
+        }
+
+        /**
+         * EXPECTED COLUMNS in Excel:
+         * A: CO Number
+         * B: Description
+         * C: Status (PENDING, APPROVED, WORK_COMPLETED, CANCELLED)
+         * D: Amount
+         * E: Date
+         */
+        let count = 0;
+        const rows = [];
+        worksheet.eachRow((row, rowNumber) => {
+            if (rowNumber === 1) return; // skip header
+
+            const coNumber = row.getCell(1).text?.trim();
+            const description = row.getCell(2).text?.trim();
+            let statusRaw = row.getCell(3).text?.trim()?.toUpperCase();
+            const amount = parseFloat(row.getCell(4).value) || 0;
+            const dateVal = row.getCell(5).value;
+
+            // Map some common variations to internal enum
+            if (statusRaw === 'COMPLETED') statusRaw = 'WORK_COMPLETED';
+            const VALID = ['PENDING', 'APPROVED', 'WORK_COMPLETED', 'CANCELLED'];
+            const status = VALID.includes(statusRaw) ? statusRaw : 'PENDING';
+
+            if (coNumber) {
+                rows.push({
+                    projectId: project._id,
+                    createdByAdminId: adminId,
+                    coNumber,
+                    description: description || '',
+                    status,
+                    amount,
+                    date: dateVal instanceof Date ? dateVal : new Date(),
+                });
+            }
+        });
+
+        if (rows.length === 0) {
+            return res.status(400).json({ error: 'No valid rows found in Excel.' });
+        }
+
+        // Upsert all rows
+        for (const r of rows) {
+            await ChangeOrder.findOneAndUpdate(
+                { projectId: r.projectId, coNumber: r.coNumber },
+                r,
+                { upsert: true, new: true }
+            );
+            count++;
+        }
+
+        // cleanup file
+        const fs = require('fs');
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+
+        res.json({ message: `Success: ${count} change orders processed.` });
+    } catch (error) {
+        console.error('[uploadCOR] Error:', error);
+        res.status(500).json({ error: 'Failed to process COR Excel.' });
+    }
+}
+
 module.exports = {
     listProjects,
     createProject,
@@ -482,4 +568,5 @@ module.exports = {
     assignUser,
     removeAssignment,
     downloadAllProjectsStatusExcel,
+    uploadCOR,
 };

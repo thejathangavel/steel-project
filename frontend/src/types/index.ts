@@ -53,6 +53,7 @@ export interface Project {
     clientName: string;
     description: string;
     status: ProjectStatus;
+    location: string;
     createdAt: string;
     updatedAt: string;
     assignments: ProjectAssignment[];
