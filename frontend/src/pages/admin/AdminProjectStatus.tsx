@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { adminListProjects, downloadProjectStatusExcel } from '../../services/projectApi';
+import { adminListProjects, downloadProjectStatusExcel, adminUploadCOR } from '../../services/projectApi';
 import { listRfiExtractions } from '../../services/rfiApi';
 import type { Project, ProjectStatus as TypeProjectStatus } from '../../types';
 
@@ -23,6 +23,15 @@ function IconDownload() {
         <svg viewBox="0 0 16 16" fill="none" strokeWidth="1.5" stroke="currentColor" width="15" height="15">
             <path d="M8 2v8m0 0l-3-3m3 3l3-3" strokeLinecap="round" strokeLinejoin="round" />
             <path d="M2 12h12" strokeLinecap="round" />
+        </svg>
+    );
+}
+
+function IconUpload() {
+    return (
+        <svg viewBox="0 0 16 16" fill="none" strokeWidth="1.5" stroke="currentColor" width="14" height="14">
+            <path d="M8 14V6m0 0L5 9m3-3l3 3" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M2 4h12" strokeLinecap="round" />
         </svg>
     );
 }
@@ -55,6 +64,8 @@ export default function AdminProjectStatus() {
     const [error, setError] = useState('');
     const [downloading, setDownloading] = useState(false);
     const [downloadError, setDownloadError] = useState('');
+    const [corUploading, setCorUploading] = useState<Record<string, boolean>>({});
+    const [corMessage, setCorMessage] = useState<Record<string, string>>({});
 
     // State for expanded RFI questions
     const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
@@ -120,7 +131,6 @@ export default function AdminProjectStatus() {
 
     const totalProjects = projects.length;
     const activeProjects = projects.filter((p) => p.status === 'active').length;
-    const totalDrawings = projects.reduce((s, p) => s + (p.drawingCount || 0), 0);
 
     async function handleDownloadStatusExcel() {
         try {
@@ -131,6 +141,21 @@ export default function AdminProjectStatus() {
             setDownloadError(err.message || 'Download failed');
         } finally {
             setDownloading(false);
+        }
+    }
+
+    async function handleUploadCOR(projectId: string, file: File) {
+        if (!file) return;
+        try {
+            setCorUploading(prev => ({ ...prev, [projectId]: true }));
+            setCorMessage(prev => ({ ...prev, [projectId]: '' }));
+            const res = await adminUploadCOR(projectId, file);
+            setCorMessage(prev => ({ ...prev, [projectId]: `Success: ${res.message}` }));
+            fetchProjects(); // Refresh counts
+        } catch (err: any) {
+            setCorMessage(prev => ({ ...prev, [projectId]: `Upload failed: ${err.message}` }));
+        } finally {
+            setCorUploading(prev => ({ ...prev, [projectId]: false }));
         }
     }
 
@@ -160,7 +185,7 @@ export default function AdminProjectStatus() {
             )}
 
             {/* Top stat cards */}
-            <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
                 <div className="stat-card accent-blue">
                     <div className="stat-card-label">Total Projects</div>
                     <div className="stat-card-value">{loading ? '—' : totalProjects}</div>
@@ -168,10 +193,6 @@ export default function AdminProjectStatus() {
                 <div className="stat-card accent-green">
                     <div className="stat-card-label">Active Projects</div>
                     <div className="stat-card-value">{loading ? '—' : activeProjects}</div>
-                </div>
-                <div className="stat-card accent-amber">
-                    <div className="stat-card-label">Total Drawings</div>
-                    <div className="stat-card-value">{loading ? '—' : totalDrawings}</div>
                 </div>
             </div>
 
@@ -212,13 +233,71 @@ export default function AdminProjectStatus() {
                                 <div className="project-status-header">
                                     <div className="project-status-num">{index + 1}</div>
                                     <div className="project-status-info">
-                                        <div className="project-status-name">{project.name}</div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                            <div className="project-status-name">{project.name}</div>
+                                            {project.location && (
+                                                <div style={{ 
+                                                    fontSize: 10, 
+                                                    fontWeight: 800, 
+                                                    color: 'var(--color-primary)', 
+                                                    background: 'var(--color-primary-light)', 
+                                                    padding: '2px 8px', 
+                                                    borderRadius: 12, 
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: '0.5px',
+                                                    border: '1px solid rgba(30, 79, 216, 0.1)'
+                                                }}>
+                                                    {project.location}
+                                                </div>
+                                            )}
+                                        </div>
                                         <div className="project-status-client">{project.clientName}</div>
                                     </div>
-                                    <span className={`badge ${STATUS_CLS[project.status]}`}>
-                                        {STATUS_LABEL[project.status]}
-                                    </span>
+                                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginLeft: 'auto' }}>
+                                        <label 
+                                            className={`btn btn-sm ${corUploading[project.id] ? 'btn-disabled' : 'btn-secondary'}`} 
+                                            style={{ 
+                                                cursor: 'pointer',
+                                                padding: '6px 14px',
+                                                fontSize: 12.5,
+                                                fontWeight: 600,
+                                                borderColor: 'var(--color-border)',
+                                                gap: 8,
+                                                boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                                            }}
+                                        >
+                                            <IconUpload />
+                                            {corUploading[project.id] ? 'Uploading...' : 'Upload COR'}
+                                            <input 
+                                                type="file" 
+                                                accept=".xlsx,.xls" 
+                                                hidden 
+                                                onChange={(e) => {
+                                                    const file = e.target.files?.[0];
+                                                    if (file) handleUploadCOR(project.id, file);
+                                                    e.target.value = '';
+                                                }}
+                                                disabled={corUploading[project.id]}
+                                            />
+                                        </label>
+                                        <span className={`badge ${STATUS_CLS[project.status]}`} style={{ padding: '6px 12px' }}>
+                                            {STATUS_LABEL[project.status]}
+                                        </span>
+                                    </div>
                                 </div>
+                                {corMessage[project.id] && (
+                                    <div style={{ 
+                                        margin: '0 20px 10px', 
+                                        padding: '6px 12px', 
+                                        fontSize: 12, 
+                                        borderRadius: 6, 
+                                        background: corMessage[project.id].startsWith('Success') ? '#f0fdf4' : '#fef2f2',
+                                        color: corMessage[project.id].startsWith('Success') ? '#166534' : '#991b1b',
+                                        border: `1px solid ${corMessage[project.id].startsWith('Success') ? '#bcf0da' : '#fecaca'}`
+                                    }}>
+                                        {corMessage[project.id]}
+                                    </div>
+                                )}
 
                                 <div className="project-status-stats">
                                     <div className="project-status-stat">
